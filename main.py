@@ -112,8 +112,8 @@ async def settings_page(request: Request, success: bool = False):
     try:
         vars = get_env_vars()
         return templates.TemplateResponse(
-            "settings.html",
-            {"request": request, "vars": vars, "success": success}
+            name="settings.html",
+            context={"request": request, "vars": vars, "success": success}
         )
     except Exception as e:
         import traceback

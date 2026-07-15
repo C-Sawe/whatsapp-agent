@@ -58,17 +58,14 @@ async def verify_webhook(request: Request):
     challenge = request.query_params.get("hub.challenge")
     
     verify_token_env = os.getenv("VERIFY_TOKEN")
+    print(f"DEBUG: mode={mode}, received_token='{token}', expected_token='{verify_token_env}'")
     
-    if mode and token:
-        if mode == "subscribe" and token == verify_token_env:
-            print("WEBHOOK_VERIFIED")
-            # Meta requires the challenge to be returned as an integer (raw response)
-            from fastapi.responses import PlainTextResponse
-            return PlainTextResponse(content=challenge, status_code=200)
-        else:
-            raise HTTPException(status_code=403, detail="Verification failed")
+    if mode == "subscribe" and token and verify_token_env and token.strip() == verify_token_env.strip():
+        print("WEBHOOK_VERIFIED")
+        from fastapi.responses import PlainTextResponse
+        return PlainTextResponse(content=challenge, status_code=200)
             
-    raise HTTPException(status_code=400, detail="Missing parameters")
+    raise HTTPException(status_code=403, detail="Verification failed")
 
 
 @app.post("/webhook")
@@ -115,13 +112,12 @@ async def settings_page(request: Request, success: bool = False):
     try:
         vars = get_env_vars()
         return templates.TemplateResponse(
-            request=request,
-            name="settings.html",
-            context={"vars": vars, "success": success}
+            "settings.html",
+            {"request": request, "vars": vars, "success": success}
         )
     except Exception as e:
         import traceback
-        return HTMLResponse(content=f"<h2>Error loading dashboard:</h2><pre>{traceback.format_exc()}</pre>", status_code=500)
+        return HTMLResponse(content=f"<h2>Error loading dashboard:</h2><pre>{traceback.format_exc()}</pre>", status_code=200)
 
 
 @app.post("/api/credentials")

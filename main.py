@@ -112,8 +112,16 @@ async def webhook_post(request: Request, background_tasks: BackgroundTasks):
 @app.get("/", response_class=HTMLResponse)
 async def settings_page(request: Request, success: bool = False):
     """Renders the settings dashboard."""
-    vars = get_env_vars()
-    return templates.TemplateResponse("settings.html", {"request": request, "vars": vars, "success": success})
+    try:
+        vars = get_env_vars()
+        return templates.TemplateResponse(
+            request=request,
+            name="settings.html",
+            context={"vars": vars, "success": success}
+        )
+    except Exception as e:
+        import traceback
+        return HTMLResponse(content=f"<h2>Error loading dashboard:</h2><pre>{traceback.format_exc()}</pre>", status_code=500)
 
 
 @app.post("/api/credentials")

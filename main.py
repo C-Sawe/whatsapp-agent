@@ -8,6 +8,7 @@ from starlette.middleware.sessions import SessionMiddleware
 from dotenv import load_dotenv
 import sheets_handler
 import config_manager
+import ai_handler
 
 load_dotenv()
 
@@ -51,9 +52,14 @@ async def send_whatsapp_message(to_number: str, text: str):
             print(f"Successfully sent message to {to_number}")
 
 def process_message(sender_id: str, text_body: str):
-    """Background task to query inventory and send a response."""
+    """Background task to query inventory and send a response using Groq AI."""
     print(f"Received inquiry for: {text_body}")
-    response_text = sheets_handler.lookup_inventory(text_body)
+    
+    # Fetch full inventory context
+    inventory_data = sheets_handler.get_all_inventory()
+    
+    # Generate conversational AI response
+    response_text = ai_handler.generate_response(text_body, inventory_data)
     
     # Store in activity logs
     activity_logs.insert(0, {
@@ -205,7 +211,8 @@ async def update_credentials(
     WHATSAPP_PHONE_NUMBER_ID: str = Form(...),
     VERIFY_TOKEN: str = Form(...),
     SPREADSHEET_ID: str = Form(...),
-    GOOGLE_APPLICATION_CREDENTIALS: str = Form(...)
+    GOOGLE_APPLICATION_CREDENTIALS: str = Form(...),
+    GROQ_API_KEY: str = Form(...)
 ):
     if not is_authenticated(request):
         raise HTTPException(status_code=401, detail="Unauthorized")
@@ -215,7 +222,8 @@ async def update_credentials(
         "WHATSAPP_PHONE_NUMBER_ID": WHATSAPP_PHONE_NUMBER_ID,
         "VERIFY_TOKEN": VERIFY_TOKEN,
         "SPREADSHEET_ID": SPREADSHEET_ID,
-        "GOOGLE_APPLICATION_CREDENTIALS": GOOGLE_APPLICATION_CREDENTIALS
+        "GOOGLE_APPLICATION_CREDENTIALS": GOOGLE_APPLICATION_CREDENTIALS,
+        "GROQ_API_KEY": GROQ_API_KEY
     })
     
     return RedirectResponse(url="/credentials?success=true", status_code=303)

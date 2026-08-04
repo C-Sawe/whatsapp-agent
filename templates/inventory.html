@@ -1,0 +1,353 @@
+{% extends "base.html" %}
+
+{% block title %}Inventory{% endblock %}
+{% block page_title %}Inventory{% endblock %}
+{% block page_subtitle %}Query the live Google Sheet — preview the exact bot reply as a WhatsApp bubble{% endblock %}
+
+{% block extra_styles %}
+<style>
+    /* ── Sandbox ─────────────────────────────────────────────────── */
+    .sandbox-wrap {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 18px;
+        margin-bottom: 22px;
+        align-items: start;
+    }
+
+    @media (max-width: 900px) {
+        .sandbox-wrap { grid-template-columns: 1fr; }
+    }
+
+    .sandbox-form-card {
+        background: var(--paper);
+        border: 1px solid #e8ecf0;
+        border-radius: 0;
+        padding: 22px;
+        box-shadow: var(--shadow-card);
+    }
+
+    .sandbox-chat-card {
+        background: var(--paper);
+        border: 1px solid #e8ecf0;
+        border-radius: 0;
+        overflow: hidden;
+        box-shadow: var(--shadow-card);
+    }
+
+    .sandbox-chat-header {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        padding: 12px 16px;
+        background: var(--ink-navy);
+        color: #fff;
+    }
+
+    .sandbox-chat-header .wa-avatar {
+        width: 32px;
+        height: 32px;
+        background: var(--signal-green);
+        border-radius: 0;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        font-size: .75rem;
+        font-weight: 700;
+        flex-shrink: 0;
+    }
+
+    .sandbox-chat-header .wa-name {
+        font-family: 'Space Grotesk', sans-serif;
+        font-weight: 600;
+        font-size: .85rem;
+    }
+
+    .sandbox-chat-header .wa-status {
+        font-size: .68rem;
+        color: rgba(255,255,255,.5);
+    }
+
+    .sandbox-chat-body {
+        background: #ece5dd;
+        min-height: 240px;
+        padding: 14px;
+        display: flex;
+        flex-direction: column;
+        gap: 10px;
+    }
+
+    .input-row {
+        display: flex;
+        gap: 10px;
+        margin-bottom: 14px;
+    }
+
+    .product-input {
+        flex: 1;
+        padding: 10px 14px;
+        background: var(--cloud);
+        border: 1.5px solid #dce1e7;
+        border-radius: 0;
+        color: var(--ink-navy);
+        font-size: .9rem;
+        transition: border-color .18s, box-shadow .18s;
+    }
+
+    .product-input:focus {
+        outline: none;
+        border-color: var(--signal-green);
+        box-shadow: 0 0 0 3px rgba(37,211,102,.15);
+        background: #fff;
+    }
+
+    .product-input::placeholder { color: var(--slate-light); }
+
+    /* typing indicator */
+    .typing-dots span {
+        display: inline-block;
+        width: 6px; height: 6px;
+        background: var(--slate-light);
+        border-radius: 50%;
+        margin: 0 1.5px;
+        animation: blink 1.4s ease-in-out infinite;
+    }
+
+    .typing-dots span:nth-child(2) { animation-delay: .2s; }
+    .typing-dots span:nth-child(3) { animation-delay: .4s; }
+
+    @keyframes blink {
+        0%, 80%, 100% { opacity: 0; }
+        40% { opacity: 1; }
+    }
+
+    /* ── Records table ────────────────────────────────────────────── */
+    .records-card {
+        background: var(--paper);
+        border: 1px solid #e8ecf0;
+        border-radius: 0;
+        box-shadow: var(--shadow-card);
+        overflow: hidden;
+    }
+
+    .records-header {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        padding: 18px 22px;
+        border-bottom: 1px solid #e8ecf0;
+    }
+
+    .records-title {
+        font-family: 'Space Grotesk', sans-serif;
+        font-size: .95rem;
+        font-weight: 700;
+        color: var(--ink-navy);
+    }
+
+    .records-caption {
+        font-size: .75rem;
+        color: var(--slate);
+        margin-top: 2px;
+    }
+
+    .records-table {
+        width: 100%;
+        border-collapse: collapse;
+    }
+
+    .records-table th {
+        font-size: .7rem;
+        font-weight: 700;
+        color: var(--slate);
+        text-transform: uppercase;
+        letter-spacing: .07em;
+        padding: 9px 16px;
+        text-align: left;
+        background: var(--cloud);
+        border-bottom: 1.5px solid #e0e4ea;
+    }
+
+    .records-table td {
+        padding: 11px 16px;
+        font-size: .855rem;
+        color: var(--ink-navy);
+        border-bottom: 1px solid #f0f3f6;
+        vertical-align: middle;
+    }
+
+    .records-table tr:last-child td { border-bottom: none; }
+    .records-table tr:hover td { background: #fafbfc; }
+</style>
+{% endblock %}
+
+{% block content %}
+
+<div class="sandbox-wrap">
+    <!-- Left: search form -->
+    <div class="sandbox-form-card">
+        <div class="card-title" style="margin-bottom:6px;">Query Sandbox</div>
+        <div class="card-caption" style="margin-bottom:16px;">Enter a product name and see the bot's live reply</div>
+
+        <form onsubmit="testSearch(event)">
+            <div class="input-row">
+                <input type="text" id="inventoryQuery" class="product-input"
+                       placeholder="Fertilizer, Seeds, DAP 50kg…" required>
+                <button type="submit" class="btn btn-primary" id="queryBtn">
+                    <svg fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"/>
+                    </svg>
+                    Test
+                </button>
+            </div>
+        </form>
+
+        <div style="background:var(--cloud); border:1px solid #e0e4ea; border-radius:var(--radius-md); padding:12px 14px;">
+            <p style="font-size:.78rem; color:var(--slate); line-height:1.6;">
+                <strong style="color:var(--ink-navy);">How it works:</strong><br>
+                The sandbox fires the same lookup logic the WhatsApp bot uses. The reply in the chat preview is identical to what a customer on WhatsApp would receive.
+            </p>
+        </div>
+    </div>
+
+    <!-- Right: chat preview -->
+    <div class="sandbox-chat-card">
+        <div class="sandbox-chat-header">
+            <div class="wa-avatar">B</div>
+            <div>
+                <div class="wa-name">Inventory Bot</div>
+                <div class="wa-status" id="botStatusLine">Waiting for query…</div>
+            </div>
+        </div>
+        <div class="sandbox-chat-body" id="chatBody">
+            <div class="empty-state" id="chatEmpty" style="padding:18px 0;">
+                <svg fill="none" stroke="currentColor" viewBox="0 0 24 24" style="width:36px;height:36px;opacity:.3;">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z"/>
+                </svg>
+                <p style="font-size:.78rem; color:var(--slate); margin-top:6px;">Bot reply appears here</p>
+            </div>
+            <!-- typing indicator placeholder -->
+            <div class="wa-bubble incoming" id="typingIndicator" style="display:none;">
+                <div class="wa-bubble-body typing-dots">
+                    <span></span><span></span><span></span>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Live inventory records -->
+<div class="records-card">
+    <div class="records-header">
+        <div>
+            <div class="records-title">Live Google Sheet Records</div>
+            <div class="records-caption">Synced directly from your connected spreadsheet</div>
+        </div>
+        <span class="badge badge-green">
+            <svg style="width:9px;height:9px;fill:currentColor;" viewBox="0 0 8 8"><circle cx="4" cy="4" r="4"/></svg>
+            Live
+        </span>
+    </div>
+
+    {% if records %}
+    <div style="overflow-x:auto;">
+        <table class="records-table">
+            <thead>
+                <tr>
+                    {% for key in records[0].keys() %}
+                    <th>{{ key }}</th>
+                    {% endfor %}
+                </tr>
+            </thead>
+            <tbody>
+                {% for row in records %}
+                <tr>
+                    {% for val in row.values() %}
+                    <td>{{ val }}</td>
+                    {% endfor %}
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+    {% else %}
+    <div class="empty-state">
+        <svg fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M9 17V7m0 10a2 2 0 01-2 2H5a2 2 0 01-2-2V7a2 2 0 012-2h2a2 2 0 012 2m0 10a2 2 0 002 2h2a2 2 0 002-2M9 7a2 2 0 012-2h2a2 2 0 012 2m0 10V7m0 10a2 2 0 002 2h2a2 2 0 002-2V7a2 2 0 00-2-2h-2a2 2 0 00-2 2"/>
+        </svg>
+        <strong>No records available</strong>
+        <p>Connect your Google Sheet on the <a href="/credentials" style="color:var(--signal-dark); font-weight:600;">Credentials</a> page, then reload.</p>
+    </div>
+    {% endif %}
+</div>
+
+{% endblock %}
+
+{% block extra_scripts %}
+<script>
+async function testSearch(e) {
+    e.preventDefault();
+    const query      = document.getElementById('inventoryQuery').value.trim();
+    const chatBody   = document.getElementById('chatBody');
+    const emptyEl    = document.getElementById('chatEmpty');
+    const typingEl   = document.getElementById('typingIndicator');
+    const statusLine = document.getElementById('botStatusLine');
+
+    if (!query) return;
+
+    if (emptyEl) emptyEl.remove();
+
+    // User bubble
+    const userBubble = document.createElement('div');
+    userBubble.className = 'wa-bubble outgoing';
+    userBubble.innerHTML = `
+        <div class="wa-bubble-body">${escapeHtml(query)}</div>
+        <div class="wa-bubble-meta">${ts()}</div>
+    `;
+    chatBody.insertBefore(userBubble, typingEl);
+
+    // Show typing
+    typingEl.style.display = 'flex';
+    statusLine.textContent = 'typing…';
+    chatBody.scrollTop = chatBody.scrollHeight;
+
+    try {
+        const res = await fetch('/api/test-inventory', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/x-www-form-urlencoded'},
+            body: new URLSearchParams({query})
+        });
+        const data = await res.json();
+        typingEl.style.display = 'none';
+        statusLine.textContent = 'online';
+
+        const botBubble = document.createElement('div');
+        botBubble.className = 'wa-bubble incoming';
+        botBubble.innerHTML = `
+            <div class="wa-sender-label">Bot</div>
+            <div class="wa-bubble-body">${escapeHtml(data.result)}</div>
+            <div class="wa-bubble-meta">${ts()}</div>
+        `;
+        chatBody.insertBefore(botBubble, typingEl);
+    } catch(err) {
+        typingEl.style.display = 'none';
+        statusLine.textContent = 'error';
+        const errBubble = document.createElement('div');
+        errBubble.className = 'wa-bubble incoming';
+        errBubble.innerHTML = `<div class="wa-bubble-body" style="color:#e53e3e;">Error querying inventory.</div>`;
+        chatBody.insertBefore(errBubble, typingEl);
+    }
+
+    chatBody.scrollTop = chatBody.scrollHeight;
+    document.getElementById('inventoryQuery').value = '';
+}
+
+function escapeHtml(str) {
+    return str.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/\n/g,'<br>');
+}
+
+function ts() {
+    return new Date().toLocaleTimeString([], {hour:'2-digit', minute:'2-digit'});
+}
+</script>
+{% endblock %}

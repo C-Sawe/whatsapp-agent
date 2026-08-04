@@ -1,0 +1,423 @@
+{% extends "base.html" %}
+
+{% block title %}Overview{% endblock %}
+{% block page_title %}Overview{% endblock %}
+{% block page_subtitle %}System health at a glance — metrics, quick query sandbox, recent activity{% endblock %}
+
+{% block extra_styles %}
+<style>
+    /* ── Stat Cards ─────────────────────────────────────────────── */
+    .stats-row {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+        gap: 16px;
+        margin-bottom: 22px;
+    }
+
+    .stat-card {
+        background: var(--paper);
+        border: 1px solid #e8ecf0;
+        border-radius: 0;
+        padding: 20px 22px;
+        box-shadow: var(--shadow-card);
+        display: flex;
+        align-items: flex-start;
+        gap: 14px;
+        transition: box-shadow .2s;
+    }
+
+    .stat-card:hover { box-shadow: var(--shadow-deep); }
+
+    .stat-icon {
+        width: 42px;
+        height: 42px;
+        border-radius: 0;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        flex-shrink: 0;
+    }
+
+    .stat-icon svg { width: 20px; height: 20px; }
+
+    .stat-icon-green  { background: var(--signal-light); color: var(--signal-dark); }
+    .stat-icon-navy   { background: rgba(11,30,61,.08);  color: var(--ink-navy); }
+    .stat-icon-amber  { background: var(--alert-light);  color: #7a5100; }
+
+    .stat-body { flex: 1; min-width: 0; }
+
+    .stat-value {
+        font-family: 'Space Grotesk', sans-serif;
+        font-size: 1.65rem;
+        font-weight: 700;
+        color: var(--ink-navy);
+        line-height: 1.15;
+    }
+
+    .stat-label {
+        font-size: 0.75rem;
+        color: var(--slate);
+        margin-top: 3px;
+        font-weight: 500;
+    }
+
+    /* ── 2-col layout ────────────────────────────────────────────── */
+    .two-col {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 18px;
+        margin-bottom: 20px;
+    }
+
+    @media (max-width: 920px) {
+        .two-col { grid-template-columns: 1fr; }
+    }
+
+    /* ── Quick Query Sandbox (bubble style) ─────────────────────── */
+    .sandbox-input-row {
+        display: flex;
+        gap: 10px;
+        margin-bottom: 14px;
+    }
+
+    .sandbox-input {
+        flex: 1;
+        padding: 10px 14px;
+        background: var(--cloud);
+        border: 1.5px solid #dce1e7;
+        border-radius: 0;
+        color: var(--ink-navy);
+        font-size: 0.9rem;
+        font-family: 'Inter', sans-serif;
+        transition: border-color .18s, box-shadow .18s;
+    }
+
+    .sandbox-input:focus {
+        outline: none;
+        border-color: var(--signal-green);
+        box-shadow: 0 0 0 3px rgba(37,211,102,.15);
+        background: #fff;
+    }
+
+    .sandbox-input::placeholder { color: var(--slate-light); }
+
+    /* ── Health table ─────────────────────────────────────────────── */
+    .health-row {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        padding: 10px 0;
+        border-bottom: 1px solid #f0f3f6;
+    }
+
+    .health-row:last-child { border-bottom: none; }
+
+    .health-label {
+        font-size: 0.84rem;
+        color: var(--ink-navy);
+        font-weight: 500;
+    }
+
+    .health-value {
+        font-family: 'JetBrains Mono', monospace;
+        font-size: 0.78rem;
+        color: var(--slate);
+        background: var(--cloud);
+        padding: 2px 8px;
+        border-radius: 0;
+        border: 1px solid #e0e4ea;
+    }
+
+    /* link style */
+    .link-green {
+        color: var(--signal-dark);
+        font-size: 0.8rem;
+        font-weight: 600;
+        text-decoration: none;
+    }
+
+    .link-green:hover { text-decoration: underline; }
+
+    /* loading bubble */
+    .wa-loading {
+        display: none;
+    }
+
+    .wa-loading.visible { display: flex; }
+
+    .typing-dots span {
+        display: inline-block;
+        width: 6px; height: 6px;
+        background: var(--slate-light);
+        border-radius: 50%;
+        margin: 0 1.5px;
+        animation: blink 1.4s ease-in-out infinite;
+    }
+
+    .typing-dots span:nth-child(2) { animation-delay: .2s; }
+    .typing-dots span:nth-child(3) { animation-delay: .4s; }
+
+    @keyframes blink {
+        0%, 80%, 100% { opacity: 0; }
+        40% { opacity: 1; }
+    }
+</style>
+{% endblock %}
+
+{% block content %}
+
+<!-- Stat cards -->
+<div class="stats-row">
+    <div class="stat-card">
+        <div class="stat-icon stat-icon-green">
+            <svg fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 10h.01M12 10h.01M16 10h.01M9 16H5a2 2 0 01-2-2V6a2 2 0 012-2h14a2 2 0 012 2v8a2 2 0 01-2 2h-5l-5 5v-5z"/>
+            </svg>
+        </div>
+        <div class="stat-body">
+            <div class="stat-value">{{ total_queries }}</div>
+            <div class="stat-label">Queries Processed</div>
+        </div>
+    </div>
+
+    <div class="stat-card">
+        <div class="stat-icon stat-icon-navy">
+            <svg fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 12h14M12 5l7 7-7 7"/>
+            </svg>
+        </div>
+        <div class="stat-body">
+            <div class="stat-value" style="font-size:1.2rem; padding-top:4px;">
+                <span class="badge badge-green">● Active</span>
+            </div>
+            <div class="stat-label">Webhook Status</div>
+        </div>
+    </div>
+
+    <div class="stat-card">
+        <div class="stat-icon stat-icon-amber">
+            <svg fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M20 7l-8-4-8 4m16 0l-8 4m8-4v10l-8 4m0-10L4 7m8 4v10M4 7v10l8 4"/>
+            </svg>
+        </div>
+        <div class="stat-body">
+            <div class="stat-value">{{ sheet_count if sheet_count is not none else '—' }}</div>
+            <div class="stat-label">Sheet Items</div>
+        </div>
+    </div>
+</div>
+
+<!-- 2-col: Quick Query + System Health -->
+<div class="two-col">
+
+    <!-- Quick Query Sandbox -->
+    <div class="card">
+        <div class="card-header">
+            <div>
+                <div class="card-title">Quick Query Sandbox</div>
+                <div class="card-caption">See exactly how the bot replies — live from your sheet</div>
+            </div>
+        </div>
+
+        <form id="quickSearchForm" onsubmit="runQuickSearch(event)">
+            <div class="sandbox-input-row">
+                <input type="text" id="queryInput" class="sandbox-input"
+                       placeholder="e.g. fertilizer, seeds, DAP 50kg…" required>
+                <button type="submit" class="btn btn-primary" id="searchBtn">
+                    <svg fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"/>
+                    </svg>
+                    Send
+                </button>
+            </div>
+        </form>
+
+        <!-- WhatsApp-style chat result -->
+        <div class="wa-chat-window" id="chatWindow">
+            <div class="empty-state" id="sandboxEmpty" style="padding: 24px 0;">
+                <svg fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z"/>
+                </svg>
+                <p style="font-size:.8rem; color:var(--slate);">Type a product name above and hit <strong>Send</strong> to preview the bot reply</p>
+            </div>
+            <div class="wa-bubble outgoing wa-loading" id="loadingBubble">
+                <div class="wa-bubble-body typing-dots">
+                    <span></span><span></span><span></span>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- System Health -->
+    <div class="card">
+        <div class="card-header">
+            <div>
+                <div class="card-title">System Health</div>
+                <div class="card-caption">Configuration state for all integrations</div>
+            </div>
+        </div>
+
+        <div class="health-row">
+            <span class="health-label">Meta Webhook Token</span>
+            <div style="display:flex; align-items:center; gap:8px;">
+                <span class="health-value">{{ 'Configured' if vars.get('VERIFY_TOKEN') else 'Missing' }}</span>
+                {% if vars.get('VERIFY_TOKEN') %}
+                <span class="badge badge-green">OK</span>
+                {% else %}
+                <span class="badge badge-red">Missing</span>
+                {% endif %}
+            </div>
+        </div>
+
+        <div class="health-row">
+            <span class="health-label">WhatsApp Phone ID</span>
+            <div style="display:flex; align-items:center; gap:8px;">
+                <span class="health-value">{{ 'Configured' if vars.get('WHATSAPP_PHONE_NUMBER_ID') else 'Missing' }}</span>
+                {% if vars.get('WHATSAPP_PHONE_NUMBER_ID') %}
+                <span class="badge badge-green">OK</span>
+                {% else %}
+                <span class="badge badge-red">Missing</span>
+                {% endif %}
+            </div>
+        </div>
+
+        <div class="health-row">
+            <span class="health-label">Google Spreadsheet ID</span>
+            <div style="display:flex; align-items:center; gap:8px;">
+                <span class="health-value">{{ 'Configured' if vars.get('SPREADSHEET_ID') else 'Missing' }}</span>
+                {% if vars.get('SPREADSHEET_ID') %}
+                <span class="badge badge-green">OK</span>
+                {% else %}
+                <span class="badge badge-amber">Missing</span>
+                {% endif %}
+            </div>
+        </div>
+
+        <div class="health-row">
+            <span class="health-label">Service Account File</span>
+            <div style="display:flex; align-items:center; gap:8px;">
+                <span class="health-value">{{ vars.get('GOOGLE_APPLICATION_CREDENTIALS', 'service_account.json') | truncate(22, True, '…') }}</span>
+                <span class="badge badge-green">Loaded</span>
+            </div>
+        </div>
+
+        <div class="health-row">
+            <span class="health-label">WhatsApp Access Token</span>
+            <div style="display:flex; align-items:center; gap:8px;">
+                <span class="health-value">{{ 'Configured' if vars.get('WHATSAPP_TOKEN') else 'Missing' }}</span>
+                {% if vars.get('WHATSAPP_TOKEN') %}
+                <span class="badge badge-green">OK</span>
+                {% else %}
+                <span class="badge badge-red">Missing</span>
+                {% endif %}
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Recent Webhook Inquiries as bubbles -->
+<div class="card">
+    <div class="card-header">
+        <div>
+            <div class="card-title">Recent Webhook Inquiries</div>
+            <div class="card-caption">Last 5 WhatsApp messages processed by the bot</div>
+        </div>
+        <a href="/logs" class="link-green">View all logs →</a>
+    </div>
+
+    {% if logs %}
+    <div class="wa-chat-window">
+        {% for log in logs[:5] %}
+        <div class="wa-bubble incoming">
+            <div class="wa-sender-label">{{ log.sender }}</div>
+            <div class="wa-bubble-body">{{ log.query }}</div>
+            <div class="wa-bubble-meta">{{ log.time }}</div>
+        </div>
+        <div class="wa-bubble outgoing">
+            <div class="wa-bubble-body">{{ log.response | truncate(160, True, '…') if log.response else 'Response sent ✓' }}</div>
+            <div class="wa-bubble-meta">Bot · {{ log.time }}</div>
+        </div>
+        {% endfor %}
+    </div>
+    {% else %}
+    <div class="wa-chat-window">
+        <div class="empty-state" style="padding: 20px 0;">
+            <svg fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z"/>
+            </svg>
+            <strong>No activity yet</strong>
+            <p>When WhatsApp users message your business number, conversations will appear here.</p>
+        </div>
+    </div>
+    {% endif %}
+</div>
+
+{% endblock %}
+
+{% block extra_scripts %}
+<script>
+async function runQuickSearch(e) {
+    e.preventDefault();
+    const query = document.getElementById('queryInput').value.trim();
+    if (!query) return;
+
+    const chatWindow = document.getElementById('chatWindow');
+    const emptyEl    = document.getElementById('sandboxEmpty');
+    const loadingEl  = document.getElementById('loadingBubble');
+
+    // Hide empty state
+    if (emptyEl) emptyEl.style.display = 'none';
+
+    // Append user bubble
+    const userBubble = document.createElement('div');
+    userBubble.className = 'wa-bubble outgoing';
+    userBubble.innerHTML = `
+        <div class="wa-bubble-body">${escapeHtml(query)}</div>
+        <div class="wa-bubble-meta">${timestamp()}</div>
+    `;
+    chatWindow.insertBefore(userBubble, loadingEl);
+
+    // Show typing indicator
+    loadingEl.classList.add('visible');
+    chatWindow.scrollTop = chatWindow.scrollHeight;
+
+    try {
+        const res = await fetch('/api/test-inventory', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/x-www-form-urlencoded'},
+            body: new URLSearchParams({query})
+        });
+        const data = await res.json();
+
+        loadingEl.classList.remove('visible');
+
+        const botBubble = document.createElement('div');
+        botBubble.className = 'wa-bubble incoming';
+        botBubble.innerHTML = `
+            <div class="wa-sender-label">Bot</div>
+            <div class="wa-bubble-body">${escapeHtml(data.result)}</div>
+            <div class="wa-bubble-meta">${timestamp()}</div>
+        `;
+        chatWindow.insertBefore(botBubble, loadingEl);
+    } catch(err) {
+        loadingEl.classList.remove('visible');
+        const errBubble = document.createElement('div');
+        errBubble.className = 'wa-bubble incoming';
+        errBubble.innerHTML = `<div class="wa-bubble-body" style="color:#e53e3e;">Error querying inventory.</div>`;
+        chatWindow.insertBefore(errBubble, loadingEl);
+    }
+
+    chatWindow.scrollTop = chatWindow.scrollHeight;
+    document.getElementById('queryInput').value = '';
+}
+
+function escapeHtml(str) {
+    return str.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/\n/g,'<br>');
+}
+
+function timestamp() {
+    const now = new Date();
+    return now.toLocaleTimeString([], {hour:'2-digit', minute:'2-digit'});
+}
+</script>
+{% endblock %}

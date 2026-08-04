@@ -1,0 +1,242 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Sign In — WhatsApp Inventory Console</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+    <style>
+        :root {
+            --ink-navy:     #0B1E3D;
+            --paper:        #FFFFFF;
+            --cloud:        #F4F6F9;
+            --signal-green: #25D366;
+            --signal-dark:  #1da851;
+            --signal-light: #d9f7e6;
+            --slate:        #5B6B82;
+            --slate-light:  #8fa0b3;
+            --alert-amber:  #F0A202;
+            --danger:       #e53e3e;
+            --danger-light: #fee2e2;
+        }
+
+        *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+        body {
+            font-family: 'Inter', sans-serif;
+            background: var(--cloud);
+            min-height: 100vh;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            position: relative;
+            overflow: hidden;
+        }
+
+        /* Subtle decorative pattern */
+        body::before {
+            content: '';
+            position: fixed;
+            inset: 0;
+            background:
+                radial-gradient(ellipse 600px 500px at 15% 40%, rgba(37,211,102,.08), transparent),
+                radial-gradient(ellipse 400px 350px at 85% 65%, rgba(11,30,61,.07), transparent);
+            pointer-events: none;
+        }
+
+        /* Login card */
+        .login-shell {
+            width: 100%;
+            max-width: 420px;
+            padding: 20px;
+            position: relative;
+            z-index: 1;
+            animation: fadeUp .45s ease-out both;
+        }
+
+        @keyframes fadeUp {
+            from { opacity: 0; transform: translateY(18px); }
+            to   { opacity: 1; transform: translateY(0); }
+        }
+
+        .login-card {
+            background: var(--paper);
+            border: 1px solid #dce1e7;
+            border-radius: 0;
+            box-shadow: 0 8px 40px rgba(11,30,61,.12);
+            overflow: hidden;
+        }
+
+        /* Card header strip */
+        .login-header {
+            background: var(--ink-navy);
+            padding: 30px 32px 26px;
+            text-align: center;
+        }
+
+        .wa-logo-mark {
+            width: 52px;
+            height: 52px;
+            background: var(--signal-green);
+            border-radius: 0;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            margin: 0 auto 14px;
+            box-shadow: 0 4px 16px rgba(37,211,102,.35);
+        }
+
+        .wa-logo-mark svg { width: 30px; height: 30px; fill: white; }
+
+        .login-title {
+            font-family: 'Space Grotesk', sans-serif;
+            font-size: 1.3rem;
+            font-weight: 700;
+            color: #fff;
+            margin-bottom: 4px;
+        }
+
+        .login-subtitle {
+            font-size: .8rem;
+            color: rgba(255,255,255,.45);
+        }
+
+        /* Card body */
+        .login-body {
+            padding: 28px 32px 32px;
+        }
+
+        .form-field {
+            margin-bottom: 18px;
+        }
+
+        label {
+            display: block;
+            font-size: .75rem;
+            font-weight: 700;
+            color: var(--slate);
+            text-transform: uppercase;
+            letter-spacing: .05em;
+            margin-bottom: 6px;
+        }
+
+        input[type="text"],
+        input[type="password"] {
+            width: 100%;
+            padding: 10px 14px;
+            background: var(--cloud);
+            border: 1.5px solid #dce1e7;
+            border-radius: 0;
+            color: var(--ink-navy);
+            font-size: .92rem;
+            font-family: 'Inter', sans-serif;
+            transition: border-color .18s, box-shadow .18s;
+        }
+
+        input[type="text"]:focus,
+        input[type="password"]:focus {
+            outline: none;
+            border-color: var(--signal-green);
+            box-shadow: 0 0 0 3px rgba(37,211,102,.15);
+            background: #fff;
+        }
+
+        input::placeholder { color: var(--slate-light); }
+
+        .btn-signin {
+            width: 100%;
+            padding: 11px;
+            background: var(--signal-green);
+            color: #fff;
+            border: none;
+            border-radius: 0;
+            font-family: 'Space Grotesk', sans-serif;
+            font-size: .95rem;
+            font-weight: 700;
+            cursor: pointer;
+            transition: background .18s, transform .15s, box-shadow .15s;
+            margin-top: 6px;
+            letter-spacing: -.01em;
+        }
+
+        .btn-signin:hover {
+            background: var(--signal-dark);
+            transform: translateY(-1px);
+            box-shadow: 0 6px 18px rgba(37,211,102,.3);
+        }
+
+        .btn-signin:active { transform: translateY(0); }
+
+        .alert-error {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            padding: 10px 14px;
+            background: var(--danger-light);
+            border: 1px solid rgba(229,62,62,.3);
+            color: var(--danger);
+            border-radius: 0;
+            font-size: .84rem;
+            margin-bottom: 18px;
+        }
+
+        .alert-error svg { width: 15px; height: 15px; flex-shrink: 0; }
+
+        .login-hint {
+            text-align: center;
+            font-size: .73rem;
+            color: var(--slate-light);
+            margin-top: 22px;
+        }
+
+        .login-hint strong { color: var(--slate); }
+    </style>
+</head>
+<body>
+
+<div class="login-shell">
+    <div class="login-card">
+        <div class="login-header">
+            <div class="wa-logo-mark">
+                <svg viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
+                    <path d="M17.472 14.382c-.297-.149-1.758-.867-2.03-.967-.273-.099-.471-.148-.67.15-.197.297-.767.966-.94 1.164-.173.199-.347.223-.644.075-.297-.15-1.255-.463-2.39-1.475-.883-.788-1.48-1.761-1.653-2.059-.173-.297-.018-.458.13-.606.134-.133.298-.347.446-.52.149-.174.198-.298.298-.497.099-.198.05-.371-.025-.52-.075-.149-.669-1.612-.916-2.207-.242-.579-.487-.5-.669-.51-.173-.008-.371-.01-.57-.01-.198 0-.52.074-.792.372-.272.297-1.04 1.016-1.04 2.479 0 1.462 1.065 2.875 1.213 3.074.149.198 2.096 3.2 5.077 4.487.709.306 1.262.489 1.694.625.712.227 1.36.195 1.871.118.571-.085 1.758-.719 2.006-1.413.248-.694.248-1.289.173-1.413-.074-.124-.272-.198-.57-.347z"/>
+                    <path d="M12 0C5.373 0 0 5.373 0 12c0 2.124.554 4.121 1.524 5.855L0 24l6.335-1.508A11.933 11.933 0 0012 24c6.627 0 12-5.373 12-12S18.627 0 12 0zm0 21.818a9.81 9.81 0 01-5.028-1.379l-.36-.214-3.742.981.999-3.647-.235-.374A9.786 9.786 0 012.182 12C2.182 6.58 6.58 2.182 12 2.182S21.818 6.58 21.818 12 17.42 21.818 12 21.818z"/>
+                </svg>
+            </div>
+            <h1 class="login-title">WhatsApp Ops Console</h1>
+            <p class="login-subtitle">Sign in to manage your inventory bot</p>
+        </div>
+
+        <div class="login-body">
+            {% if error %}
+            <div class="alert-error">
+                <svg fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"/>
+                </svg>
+                {{ error }}
+            </div>
+            {% endif %}
+
+            <form action="/login" method="POST">
+                <div class="form-field">
+                    <label for="username">Username</label>
+                    <input type="text" id="username" name="username"
+                           placeholder="admin" required autofocus>
+                </div>
+                <div class="form-field">
+                    <label for="password">Password</label>
+                    <input type="password" id="password" name="password"
+                           placeholder="••••••••" required>
+                </div>
+                <button type="submit" class="btn-signin">Sign In</button>
+            </form>
+
+            <p class="login-hint">Default credentials: <strong>admin</strong> / <strong>admin123</strong></p>
+        </div>
+    </div>
+</div>
+
+</body>
+</html>

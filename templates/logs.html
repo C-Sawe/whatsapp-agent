@@ -1,0 +1,219 @@
+{% extends "base.html" %}
+
+{% block title %}Activity Logs{% endblock %}
+{% block page_title %}Activity Logs{% endblock %}
+{% block page_subtitle %}Incoming WhatsApp webhook events — every query and bot reply, in order{% endblock %}
+
+{% block extra_styles %}
+<style>
+    /* ── Logs toolbar ────────────────────────────────────────────── */
+    .logs-toolbar {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        margin-bottom: 18px;
+    }
+
+    .logs-count {
+        font-family: 'Space Grotesk', sans-serif;
+        font-size: .85rem;
+        color: var(--slate);
+    }
+
+    .logs-count strong {
+        color: var(--ink-navy);
+        font-size: 1rem;
+    }
+
+    /* ── Bubble-based log feed ───────────────────────────────────── */
+    .log-feed {
+        display: flex;
+        flex-direction: column;
+        gap: 28px;
+    }
+
+    .log-entry {
+        display: flex;
+        flex-direction: column;
+        gap: 0;
+    }
+
+    .log-entry-header {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        margin-bottom: 8px;
+        padding: 0 4px;
+    }
+
+    .log-sender-avatar {
+        width: 28px;
+        height: 28px;
+        border-radius: 0;
+        background: var(--cloud);
+        border: 1.5px solid #dce1e7;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        font-size: .65rem;
+        font-weight: 700;
+        color: var(--slate);
+        flex-shrink: 0;
+        font-family: 'JetBrains Mono', monospace;
+    }
+
+    .log-sender-phone {
+        font-family: 'JetBrains Mono', monospace;
+        font-size: .78rem;
+        font-weight: 500;
+        color: var(--ink-navy);
+    }
+
+    .log-timestamp {
+        font-family: 'JetBrains Mono', monospace;
+        font-size: .7rem;
+        color: var(--slate-light);
+        margin-left: auto;
+    }
+
+    .log-bubble-pair {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 12px;
+        background: var(--paper);
+        border: 1px solid #e8ecf0;
+        border-radius: 0;
+        padding: 16px;
+        box-shadow: var(--shadow-card);
+    }
+
+    @media (max-width: 760px) {
+        .log-bubble-pair { grid-template-columns: 1fr; }
+    }
+
+    .log-bubble-col {
+        display: flex;
+        flex-direction: column;
+        gap: 6px;
+    }
+
+    .log-col-label {
+        font-size: .65rem;
+        font-weight: 700;
+        text-transform: uppercase;
+        letter-spacing: .07em;
+        color: var(--slate-light);
+        padding: 0 2px;
+    }
+
+    /* incoming = customer message */
+    .log-incoming-bubble {
+        background: #fff;
+        border: 1.5px solid #e8ecf0;
+        border-radius: 0;
+        padding: 10px 14px;
+        font-size: .87rem;
+        color: var(--ink-navy);
+        line-height: 1.5;
+        word-break: break-word;
+    }
+
+    /* outgoing = bot reply */
+    .log-outgoing-bubble {
+        background: #d9fdd3;
+        border: 1.5px solid #b8f0c8;
+        border-radius: 0;
+        padding: 10px 14px;
+        font-size: .87rem;
+        color: #111;
+        line-height: 1.5;
+        word-break: break-word;
+    }
+
+    .log-divider {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        margin: 4px 0;
+    }
+
+    .log-divider span {
+        font-size: .68rem;
+        color: var(--slate-light);
+        white-space: nowrap;
+    }
+
+    .log-divider::before,
+    .log-divider::after {
+        content: '';
+        flex: 1;
+        height: 1px;
+        background: #e8ecf0;
+    }
+</style>
+{% endblock %}
+
+{% block content %}
+
+<div class="logs-toolbar">
+    <div class="logs-count">
+        {% if logs %}
+        <strong>{{ logs | length }}</strong> webhook events recorded
+        {% else %}
+        <strong>0</strong> events yet
+        {% endif %}
+    </div>
+    <button onclick="location.reload()" class="btn btn-secondary">
+        <svg fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"/>
+        </svg>
+        Refresh
+    </button>
+</div>
+
+{% if logs %}
+<div class="log-feed">
+    {% for log in logs %}
+    <div class="log-entry">
+        <div class="log-entry-header">
+            <div class="log-sender-avatar">{{ log.sender[-4:] if log.sender|length >= 4 else '??' }}</div>
+            <span class="log-sender-phone">{{ log.sender }}</span>
+            <span class="badge badge-green">Processed</span>
+            <span class="log-timestamp">{{ log.time }}</span>
+        </div>
+
+        <div class="log-bubble-pair">
+            <div class="log-bubble-col">
+                <span class="log-col-label">Customer query</span>
+                <div class="log-incoming-bubble">{{ log.query }}</div>
+            </div>
+            <div class="log-bubble-col">
+                <span class="log-col-label">Bot reply</span>
+                <div class="log-outgoing-bubble">{{ log.response if log.response else 'Reply sent ✓' }}</div>
+            </div>
+        </div>
+    </div>
+
+    {% if not loop.last %}
+    <div class="log-divider">
+        <span>earlier</span>
+    </div>
+    {% endif %}
+    {% endfor %}
+</div>
+
+{% else %}
+<div class="card">
+    <div class="empty-state">
+        <svg fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2"/>
+        </svg>
+        <strong>No webhook activity yet</strong>
+        <p>
+            When WhatsApp users send messages to your business number, each query and bot reply will appear here as a conversation pair.
+        </p>
+    </div>
+</div>
+{% endif %}
+
+{% endblock %}

@@ -3,189 +3,347 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Mosop Farm Inputs - Webhook Settings</title>
-    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <title>Settings — WhatsApp Inventory Console</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
     <style>
         :root {
-            --bg-color: #0f172a;
-            --surface-color: rgba(30, 41, 59, 0.7);
-            --border-color: rgba(255, 255, 255, 0.1);
-            --text-primary: #f8fafc;
-            --text-secondary: #94a3b8;
-            --accent-color: #10b981;
-            --accent-hover: #059669;
-            --input-bg: rgba(15, 23, 42, 0.6);
+            --ink-navy:     #0B1E3D;
+            --paper:        #FFFFFF;
+            --cloud:        #F4F6F9;
+            --signal-green: #25D366;
+            --signal-dark:  #1da851;
+            --signal-light: #d9f7e6;
+            --slate:        #5B6B82;
+            --slate-light:  #8fa0b3;
+            --danger:       #e53e3e;
+            --danger-light: #fee2e2;
         }
+
+        *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 
         body {
-            margin: 0;
-            padding: 0;
             font-family: 'Inter', sans-serif;
-            background-color: var(--bg-color);
-            color: var(--text-primary);
-            display: flex;
-            justify-content: center;
-            align-items: center;
+            background: var(--cloud);
             min-height: 100vh;
-            background-image: 
-                radial-gradient(circle at 15% 50%, rgba(16, 185, 129, 0.15), transparent 25%),
-                radial-gradient(circle at 85% 30%, rgba(59, 130, 246, 0.15), transparent 25%);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            padding: 32px 20px;
         }
 
-        .container {
+        body::before {
+            content: '';
+            position: fixed;
+            inset: 0;
+            background:
+                radial-gradient(ellipse 600px 500px at 10% 35%, rgba(37,211,102,.07), transparent),
+                radial-gradient(ellipse 400px 300px at 90% 70%, rgba(11,30,61,.06), transparent);
+            pointer-events: none;
+        }
+
+        .settings-shell {
             width: 100%;
-            max-width: 600px;
-            padding: 2rem;
-            margin: 2rem;
-            background: var(--surface-color);
-            border: 1px solid var(--border-color);
-            border-radius: 24px;
-            backdrop-filter: blur(16px);
-            box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.5);
-            animation: fadeIn 0.5s ease-out;
+            max-width: 560px;
+            position: relative;
+            z-index: 1;
+            animation: fadeUp .4s ease-out both;
         }
 
-        @keyframes fadeIn {
-            from { opacity: 0; transform: translateY(20px); }
-            to { opacity: 1; transform: translateY(0); }
+        @keyframes fadeUp {
+            from { opacity: 0; transform: translateY(16px); }
+            to   { opacity: 1; transform: translateY(0); }
         }
 
-        .header {
-            text-align: center;
-            margin-bottom: 2rem;
+        .settings-card {
+            background: var(--paper);
+            border: 1px solid #dce1e7;
+            border-radius: 0;
+            box-shadow: 0 8px 40px rgba(11,30,61,.10);
+            overflow: hidden;
         }
 
-        h1 {
-            font-size: 1.875rem;
+        .settings-header {
+            background: var(--ink-navy);
+            padding: 24px 28px;
+            display: flex;
+            align-items: center;
+            gap: 14px;
+        }
+
+        .settings-icon {
+            width: 42px;
+            height: 42px;
+            background: var(--signal-green);
+            border-radius: 0;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            flex-shrink: 0;
+        }
+
+        .settings-icon svg { width: 22px; height: 22px; fill: white; }
+
+        .settings-header-text { flex: 1; }
+
+        .settings-title {
+            font-family: 'Space Grotesk', sans-serif;
+            font-size: 1.05rem;
             font-weight: 700;
-            margin: 0 0 0.5rem 0;
-            background: linear-gradient(to right, #34d399, #3b82f6);
-            -webkit-background-clip: text;
-            -webkit-text-fill-color: transparent;
+            color: #fff;
         }
 
-        p.subtitle {
-            color: var(--text-secondary);
-            font-size: 0.95rem;
-            margin: 0;
+        .settings-subtitle {
+            font-size: .76rem;
+            color: rgba(255,255,255,.42);
+            margin-top: 2px;
         }
 
-        .form-group {
-            margin-bottom: 1.5rem;
+        .back-link {
+            font-size: .75rem;
+            color: rgba(255,255,255,.45);
+            text-decoration: none;
+            display: flex;
+            align-items: center;
+            gap: 5px;
+            transition: color .15s;
         }
+
+        .back-link:hover { color: rgba(255,255,255,.75); }
+        .back-link svg { width: 13px; height: 13px; }
+
+        .settings-body {
+            padding: 24px 28px;
+        }
+
+        .alert-success {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            padding: 10px 14px;
+            background: var(--signal-light);
+            border: 1px solid rgba(37,211,102,.35);
+            color: #1a7a3f;
+            border-radius: 0;
+            font-size: .84rem;
+            margin-bottom: 20px;
+        }
+
+        .alert-success svg { width: 15px; height: 15px; flex-shrink: 0; }
+
+        .form-field { margin-bottom: 16px; }
 
         label {
             display: block;
-            font-size: 0.875rem;
-            font-weight: 500;
-            color: var(--text-secondary);
-            margin-bottom: 0.5rem;
+            font-size: .74rem;
+            font-weight: 700;
+            color: var(--slate);
+            text-transform: uppercase;
+            letter-spacing: .05em;
+            margin-bottom: 5px;
         }
 
         input[type="text"],
         input[type="password"] {
             width: 100%;
-            padding: 0.75rem 1rem;
-            background-color: var(--input-bg);
-            border: 1px solid var(--border-color);
-            border-radius: 12px;
-            color: var(--text-primary);
-            font-size: 1rem;
-            transition: all 0.2s ease;
-            box-sizing: border-box;
+            padding: 10px 14px;
+            background: var(--cloud);
+            border: 1.5px solid #dce1e7;
+            border-radius: 0;
+            color: var(--ink-navy);
+            font-size: .9rem;
+            transition: border-color .18s, box-shadow .18s;
         }
 
         input[type="text"]:focus,
         input[type="password"]:focus {
             outline: none;
-            border-color: var(--accent-color);
-            box-shadow: 0 0 0 3px rgba(16, 185, 129, 0.2);
+            border-color: var(--signal-green);
+            box-shadow: 0 0 0 3px rgba(37,211,102,.14);
+            background: #fff;
         }
 
-        .btn-submit {
-            width: 100%;
-            padding: 1rem;
-            background-color: var(--accent-color);
-            color: white;
+        input::placeholder { color: var(--slate-light); }
+
+        input.mono {
+            font-family: 'JetBrains Mono', monospace;
+            font-size: .82rem;
+        }
+
+        .input-wrap { position: relative; }
+        .input-wrap input { padding-right: 42px; }
+
+        .eye-toggle {
+            position: absolute;
+            right: 12px;
+            top: 50%;
+            transform: translateY(-50%);
+            background: none;
             border: none;
-            border-radius: 12px;
-            font-size: 1rem;
-            font-weight: 600;
             cursor: pointer;
-            transition: all 0.2s ease;
-            margin-top: 1rem;
+            color: var(--slate-light);
+            padding: 0;
+            display: flex;
         }
 
-        .btn-submit:hover {
-            background-color: var(--accent-hover);
-            transform: translateY(-2px);
-            box-shadow: 0 10px 15px -3px rgba(16, 185, 129, 0.3);
+        .eye-toggle:hover { color: var(--slate); }
+        .eye-toggle svg { width: 16px; height: 16px; }
+
+        .divider {
+            height: 1px;
+            background: #f0f3f6;
+            margin: 20px 0;
         }
 
-        .btn-submit:active {
-            transform: translateY(0);
-        }
-        
-        .alert {
-            padding: 1rem;
-            border-radius: 12px;
-            margin-bottom: 1.5rem;
-            display: none;
-            font-size: 0.9rem;
-        }
-        
-        .alert.success {
-            background-color: rgba(16, 185, 129, 0.1);
-            border: 1px solid rgba(16, 185, 129, 0.2);
-            color: #34d399;
-            display: block;
+        .btn-save {
+            width: 100%;
+            padding: 11px;
+            background: var(--signal-green);
+            color: #fff;
+            border: none;
+            border-radius: 0;
+            font-family: 'Space Grotesk', sans-serif;
+            font-size: .92rem;
+            font-weight: 700;
+            cursor: pointer;
+            transition: background .18s, transform .15s, box-shadow .15s;
+            margin-top: 8px;
         }
 
+        .btn-save:hover {
+            background: var(--signal-dark);
+            transform: translateY(-1px);
+            box-shadow: 0 6px 16px rgba(37,211,102,.28);
+        }
+
+        .section-label {
+            font-family: 'Space Grotesk', sans-serif;
+            font-size: .8rem;
+            font-weight: 700;
+            color: var(--ink-navy);
+            margin-bottom: 12px;
+            display: flex;
+            align-items: center;
+            gap: 7px;
+        }
+
+        .section-label::after {
+            content: '';
+            flex: 1;
+            height: 1px;
+            background: #eaedf1;
+        }
     </style>
 </head>
 <body>
 
-    <div class="container">
-        <div class="header">
-            <h1>Settings Dashboard</h1>
-            <p class="subtitle">Manage your webhook and Google Sheets credentials.</p>
+<div class="settings-shell">
+    <div class="settings-card">
+        <div class="settings-header">
+            <div class="settings-icon">
+                <svg viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
+                    <path d="M17.472 14.382c-.297-.149-1.758-.867-2.03-.967-.273-.099-.471-.148-.67.15-.197.297-.767.966-.94 1.164-.173.199-.347.223-.644.075-.297-.15-1.255-.463-2.39-1.475-.883-.788-1.48-1.761-1.653-2.059-.173-.297-.018-.458.13-.606.134-.133.298-.347.446-.52.149-.174.198-.298.298-.497.099-.198.05-.371-.025-.52-.075-.149-.669-1.612-.916-2.207-.242-.579-.487-.5-.669-.51-.173-.008-.371-.01-.57-.01-.198 0-.52.074-.792.372-.272.297-1.04 1.016-1.04 2.479 0 1.462 1.065 2.875 1.213 3.074.149.198 2.096 3.2 5.077 4.487.709.306 1.262.489 1.694.625.712.227 1.36.195 1.871.118.571-.085 1.758-.719 2.006-1.413.248-.694.248-1.289.173-1.413-.074-.124-.272-.198-.57-.347z"/>
+                    <path d="M12 0C5.373 0 0 5.373 0 12c0 2.124.554 4.121 1.524 5.855L0 24l6.335-1.508A11.933 11.933 0 0012 24c6.627 0 12-5.373 12-12S18.627 0 12 0zm0 21.818a9.81 9.81 0 01-5.028-1.379l-.36-.214-3.742.981.999-3.647-.235-.374A9.786 9.786 0 012.182 12C2.182 6.58 6.58 2.182 12 2.182S21.818 6.58 21.818 12 17.42 21.818 12 21.818z"/>
+                </svg>
+            </div>
+            <div class="settings-header-text">
+                <div class="settings-title">Settings</div>
+                <div class="settings-subtitle">Webhook & Google Sheets credentials</div>
+            </div>
+            <a href="/overview" class="back-link">
+                <svg fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10 19l-7-7m0 0l7-7m-7 7h18"/>
+                </svg>
+                Dashboard
+            </a>
         </div>
-        
-        {% if success %}
-        <div class="alert success">
-            Settings have been successfully updated!
+
+        <div class="settings-body">
+            {% if success %}
+            <div class="alert-success">
+                <svg fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"/>
+                </svg>
+                Settings saved successfully.
+            </div>
+            {% endif %}
+
+            <form action="/api/credentials" method="POST">
+
+                <div class="section-label">Meta WhatsApp</div>
+
+                <div class="form-field">
+                    <label for="WHATSAPP_TOKEN">System User Access Token</label>
+                    <div class="input-wrap">
+                        <input type="password" id="WHATSAPP_TOKEN" name="WHATSAPP_TOKEN"
+                               class="mono"
+                               value="{{ vars.get('WHATSAPP_TOKEN', '') }}"
+                               placeholder="EAAM…" required>
+                        <button type="button" class="eye-toggle" onclick="toggle('WHATSAPP_TOKEN')">
+                            <svg fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"/>
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z"/>
+                            </svg>
+                        </button>
+                    </div>
+                </div>
+
+                <div class="form-field">
+                    <label for="WHATSAPP_PHONE_NUMBER_ID">Phone Number ID</label>
+                    <input type="text" id="WHATSAPP_PHONE_NUMBER_ID" name="WHATSAPP_PHONE_NUMBER_ID"
+                           class="mono"
+                           value="{{ vars.get('WHATSAPP_PHONE_NUMBER_ID', '') }}"
+                           placeholder="1234567890" required>
+                </div>
+
+                <div class="form-field">
+                    <label for="VERIFY_TOKEN">Webhook Verify Token</label>
+                    <div class="input-wrap">
+                        <input type="password" id="VERIFY_TOKEN" name="VERIFY_TOKEN"
+                               class="mono"
+                               value="{{ vars.get('VERIFY_TOKEN', '') }}"
+                               placeholder="my_secret_token" required>
+                        <button type="button" class="eye-toggle" onclick="toggle('VERIFY_TOKEN')">
+                            <svg fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"/>
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z"/>
+                            </svg>
+                        </button>
+                    </div>
+                </div>
+
+                <div class="divider"></div>
+
+                <div class="section-label">Google Sheets</div>
+
+                <div class="form-field">
+                    <label for="SPREADSHEET_ID">Spreadsheet ID</label>
+                    <input type="text" id="SPREADSHEET_ID" name="SPREADSHEET_ID"
+                           class="mono"
+                           value="{{ vars.get('SPREADSHEET_ID', '') }}"
+                           placeholder="ID from the sheet URL" required>
+                </div>
+
+                <div class="form-field">
+                    <label for="GOOGLE_APPLICATION_CREDENTIALS">Service Account JSON Path</label>
+                    <input type="text" id="GOOGLE_APPLICATION_CREDENTIALS" name="GOOGLE_APPLICATION_CREDENTIALS"
+                           class="mono"
+                           value="{{ vars.get('GOOGLE_APPLICATION_CREDENTIALS', 'service_account.json') }}"
+                           required>
+                </div>
+
+                <button type="submit" class="btn-save">Save Settings</button>
+            </form>
         </div>
-        {% endif %}
-
-        <form action="/api/credentials" method="POST">
-            <div class="form-group">
-                <label for="WHATSAPP_TOKEN">WhatsApp System User Token</label>
-                <input type="password" id="WHATSAPP_TOKEN" name="WHATSAPP_TOKEN" value="{{ vars.get('WHATSAPP_TOKEN', '') }}" placeholder="EAAI..." required>
-            </div>
-
-            <div class="form-group">
-                <label for="WHATSAPP_PHONE_NUMBER_ID">Phone Number ID</label>
-                <input type="text" id="WHATSAPP_PHONE_NUMBER_ID" name="WHATSAPP_PHONE_NUMBER_ID" value="{{ vars.get('WHATSAPP_PHONE_NUMBER_ID', '') }}" placeholder="1234567890" required>
-            </div>
-
-            <div class="form-group">
-                <label for="VERIFY_TOKEN">Verify Token</label>
-                <input type="text" id="VERIFY_TOKEN" name="VERIFY_TOKEN" value="{{ vars.get('VERIFY_TOKEN', '') }}" placeholder="Your custom secret token" required>
-            </div>
-
-            <div class="form-group">
-                <label for="SPREADSHEET_ID">Google Spreadsheet ID</label>
-                <input type="text" id="SPREADSHEET_ID" name="SPREADSHEET_ID" value="{{ vars.get('SPREADSHEET_ID', '') }}" placeholder="ID from the sheet URL" required>
-            </div>
-
-            <div class="form-group">
-                <label for="GOOGLE_APPLICATION_CREDENTIALS">Google Credentials Path</label>
-                <input type="text" id="GOOGLE_APPLICATION_CREDENTIALS" name="GOOGLE_APPLICATION_CREDENTIALS" value="{{ vars.get('GOOGLE_APPLICATION_CREDENTIALS', 'service_account.json') }}" required>
-            </div>
-
-            <button type="submit" class="btn-submit">Save Settings</button>
-        </form>
     </div>
+</div>
 
+<script>
+function toggle(id) {
+    const el = document.getElementById(id);
+    el.type = el.type === 'password' ? 'text' : 'password';
+}
+</script>
 </body>
 </html>

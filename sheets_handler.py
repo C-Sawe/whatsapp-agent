@@ -64,3 +64,39 @@ def lookup_inventory(product_name: str) -> str:
     except Exception as e:
         print(f"Error querying sheet: {e}")
         return "Sorry, we encountered an error looking up the inventory right now."
+
+def test_sheet_connection() -> dict:
+    """Tests the connection to Google Sheets and returns diagnostic status."""
+    creds_path = os.getenv("GOOGLE_APPLICATION_CREDENTIALS", "service_account.json")
+    if not os.path.exists(creds_path):
+        return {"success": False, "message": f"Credentials file '{creds_path}' not found on server."}
+
+    spreadsheet_id = os.getenv("SPREADSHEET_ID")
+    if not spreadsheet_id:
+        return {"success": False, "message": "SPREADSHEET_ID is not configured in .env."}
+
+    try:
+        sheet = get_sheet()
+        if not sheet:
+            return {"success": False, "message": "Could not authorize or access the Google Sheet."}
+        
+        records = sheet.get_all_records()
+        return {
+            "success": True,
+            "message": f"Successfully connected to sheet! Found {len(records)} product records.",
+            "count": len(records)
+        }
+    except Exception as e:
+        return {"success": False, "message": f"Error connecting to sheet: {str(e)}"}
+
+def get_all_inventory() -> list:
+    """Fetches all inventory records from Google Sheet."""
+    sheet = get_sheet()
+    if not sheet:
+        return []
+    try:
+        return sheet.get_all_records()
+    except Exception as e:
+        print(f"Error fetching all records: {e}")
+        return []
+

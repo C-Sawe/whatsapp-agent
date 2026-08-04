@@ -1,20 +1,31 @@
 import os
 import httpx
+from datetime import datetime
 from fastapi import FastAPI, Request, BackgroundTasks, HTTPException, Form
 from fastapi.templating import Jinja2Templates
-from fastapi.responses import HTMLResponse
+from fastapi.responses import HTMLResponse, RedirectResponse, JSONResponse
+from starlette.middleware.sessions import SessionMiddleware
 from dotenv import load_dotenv
-from sheets_handler import lookup_inventory
-from config_manager import get_env_vars, update_env_vars
+import sheets_handler
+import config_manager
 
 load_dotenv()
 
 app = FastAPI()
 
+# Add Session Middleware for authentication
+SECRET_KEY = os.getenv("SESSION_SECRET", "super_secret_whatsapp_bot_key_2026")
+app.add_middleware(SessionMiddleware, secret_key=SECRET_KEY)
+
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 templates = Jinja2Templates(directory=os.path.join(BASE_DIR, "templates"))
 
-# Removing statically assigned env vars to read dynamically during requests.
+# Global activity log store (in-memory)
+activity_logs = []
+
+def is_authenticated(request: Request) -> bool:
+    """Checks if the user is authenticated via session."""
+    return request.session.get("authenticated", False) == True
 
 async def send_whatsapp_message(to_number: str, text: str):
     """Sends a text message back to the user via WhatsApp Graph API."""
@@ -42,17 +53,26 @@ async def send_whatsapp_message(to_number: str, text: str):
 def process_message(sender_id: str, text_body: str):
     """Background task to query inventory and send a response."""
     print(f"Received inquiry for: {text_body}")
-    response_text = lookup_inventory(text_body)
+    response_text = sheets_handler.lookup_inventory(text_body)
+    
+    # Store in activity logs
+    activity_logs.insert(0, {
+        "time": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+        "sender": sender_id,
+        "query": text_body,
+        "response": response_text
+    })
     
     # Run the async function synchronously within the background task
     import asyncio
     asyncio.run(send_whatsapp_message(sender_id, response_text))
 
+
+# --- Public Webhook Endpoints ---
+
 @app.get("/webhook")
 async def verify_webhook(request: Request):
-    """
-    Handles Meta's standard hub.challenge handshake using VERIFY_TOKEN.
-    """
+    """Handles Meta's standard hub.challenge handshake using VERIFY_TOKEN."""
     mode = request.query_params.get("hub.mode")
     token = request.query_params.get("hub.verify_token")
     challenge = request.query_params.get("hub.challenge")
@@ -70,66 +90,127 @@ async def verify_webhook(request: Request):
 
 @app.post("/webhook")
 async def webhook_post(request: Request, background_tasks: BackgroundTasks):
-    """
-    Parses the deeply nested WhatsApp Cloud API JSON payload.
-    CRITICAL: Ignores status updates to prevent infinite loops.
-    """
+    """Parses WhatsApp Cloud API JSON payload."""
     body = await request.json()
     
-    # Check if this is a WhatsApp API event
     if body.get("object") == "whatsapp_business_account":
         for entry in body.get("entry", []):
             for change in entry.get("changes", []):
                 value = change.get("value", {})
                 
-                # CRITICAL: Ignore status updates (delivered, read, sent)
                 if "statuses" in value:
-                    # Logging for debugging purposes, but we do NOT process it
                     print("Received status update, ignoring to prevent infinite loop.")
                     continue
                     
-                # Process only if there is a message
-                if "messages" in value:
-                    message = value["messages"][0]
-                    
-                    # Only process text messages
+                messages = value.get("messages", [])
+                if messages:
+                    message = messages[0]
                     if message.get("type") == "text":
-                        sender_id = message["from"] # The user's phone number
-                        text_body = message["text"]["body"]
+                        sender_id = message.get("from", "")
+                        text_body = message.get("text", {}).get("body", "")
                         
-                        # Add processing to background tasks so we can return 200 OK immediately
-                        background_tasks.add_task(process_message, sender_id, text_body)
+                        if sender_id and text_body:
+                            background_tasks.add_task(process_message, sender_id, text_body)
                     else:
                         print(f"Ignored non-text message of type: {message.get('type')}")
                         
-    # Meta requires a 200 OK response within seconds to avoid resending the webhook
     return {"status": "success"}
 
 
-@app.get("/", response_class=HTMLResponse)
-async def settings_page(request: Request, success: bool = False):
-    """Renders the settings dashboard."""
-    try:
-        vars = get_env_vars()
-        return templates.TemplateResponse(
-            name="settings.html",
-            context={"request": request, "vars": vars, "success": success}
-        )
-    except Exception as e:
-        import traceback
-        return HTMLResponse(content=f"<h2>Error loading dashboard:</h2><pre>{traceback.format_exc()}</pre>", status_code=200)
+# --- Authentication Routes ---
+
+@app.get("/login", response_class=HTMLResponse)
+async def login_page(request: Request):
+    if is_authenticated(request):
+        return RedirectResponse(url="/overview", status_code=303)
+    return templates.TemplateResponse(request, name="login.html", context={"request": request, "error": None})
+
+
+@app.post("/login", response_class=HTMLResponse)
+async def login_submit(request: Request, username: str = Form(...), password: str = Form(...)):
+    admin_user = os.getenv("ADMIN_USERNAME", "admin")
+    admin_pass = os.getenv("ADMIN_PASSWORD", "admin123")
+    
+    if username.strip() == admin_user and password.strip() == admin_pass:
+        request.session["authenticated"] = True
+        return RedirectResponse(url="/overview", status_code=303)
+    
+    return templates.TemplateResponse(
+        request,
+        name="login.html",
+        context={"request": request, "error": "Invalid username or password. Please try again."}
+    )
+
+
+@app.get("/logout")
+async def logout(request: Request):
+    request.session.clear()
+    return RedirectResponse(url="/login", status_code=303)
+
+
+# --- Protected Dashboard Routes ---
+
+@app.get("/")
+async def root(request: Request):
+    if is_authenticated(request):
+        return RedirectResponse(url="/overview", status_code=303)
+    return RedirectResponse(url="/login", status_code=303)
+
+
+@app.get("/overview", response_class=HTMLResponse)
+async def overview_page(request: Request):
+    if not is_authenticated(request):
+        return RedirectResponse(url="/login", status_code=303)
+        
+    vars = config_manager.get_env_vars()
+    conn_info = sheets_handler.test_sheet_connection()
+    sheet_count = conn_info.get("count") if conn_info.get("success") else None
+    
+    return templates.TemplateResponse(
+        request,
+        name="overview.html",
+        context={
+            "request": request,
+            "active_page": "overview",
+            "vars": vars,
+            "total_queries": len(activity_logs),
+            "sheet_count": sheet_count,
+            "logs": activity_logs
+        }
+    )
+
+
+@app.get("/credentials", response_class=HTMLResponse)
+async def credentials_page(request: Request, success: bool = False):
+    if not is_authenticated(request):
+        return RedirectResponse(url="/login", status_code=303)
+        
+    vars = config_manager.get_env_vars()
+    return templates.TemplateResponse(
+        request,
+        name="credentials.html",
+        context={
+            "request": request,
+            "active_page": "credentials",
+            "vars": vars,
+            "success": success
+        }
+    )
 
 
 @app.post("/api/credentials")
 async def update_credentials(
+    request: Request,
     WHATSAPP_TOKEN: str = Form(...),
     WHATSAPP_PHONE_NUMBER_ID: str = Form(...),
     VERIFY_TOKEN: str = Form(...),
     SPREADSHEET_ID: str = Form(...),
     GOOGLE_APPLICATION_CREDENTIALS: str = Form(...)
 ):
-    """Updates the credentials and returns the settings page."""
-    update_env_vars({
+    if not is_authenticated(request):
+        raise HTTPException(status_code=401, detail="Unauthorized")
+        
+    config_manager.update_env_vars({
         "WHATSAPP_TOKEN": WHATSAPP_TOKEN,
         "WHATSAPP_PHONE_NUMBER_ID": WHATSAPP_PHONE_NUMBER_ID,
         "VERIFY_TOKEN": VERIFY_TOKEN,
@@ -137,8 +218,61 @@ async def update_credentials(
         "GOOGLE_APPLICATION_CREDENTIALS": GOOGLE_APPLICATION_CREDENTIALS
     })
     
-    from fastapi.responses import RedirectResponse
-    # Redirect back to settings page with success flag
-    return RedirectResponse(url="/?success=true", status_code=303)
+    return RedirectResponse(url="/credentials?success=true", status_code=303)
 
 
+@app.get("/inventory", response_class=HTMLResponse)
+async def inventory_page(request: Request):
+    if not is_authenticated(request):
+        return RedirectResponse(url="/login", status_code=303)
+        
+    records = sheets_handler.get_all_inventory()
+    return templates.TemplateResponse(
+        request,
+        name="inventory.html",
+        context={
+            "request": request,
+            "active_page": "inventory",
+            "records": records
+        }
+    )
+
+
+@app.post("/api/test-inventory")
+async def api_test_inventory(request: Request, query: str = Form(...)):
+    if not is_authenticated(request):
+        raise HTTPException(status_code=401, detail="Unauthorized")
+        
+    response_text = sheets_handler.lookup_inventory(query)
+    activity_logs.insert(0, {
+        "time": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+        "sender": "Dashboard Tester",
+        "query": query,
+        "response": response_text
+    })
+    return JSONResponse(content={"result": response_text})
+
+
+@app.get("/logs", response_class=HTMLResponse)
+async def logs_page(request: Request):
+    if not is_authenticated(request):
+        return RedirectResponse(url="/login", status_code=303)
+        
+    return templates.TemplateResponse(
+        request,
+        name="logs.html",
+        context={
+            "request": request,
+            "active_page": "logs",
+            "logs": activity_logs
+        }
+    )
+
+
+@app.post("/api/test-sheets")
+async def api_test_sheets(request: Request):
+    if not is_authenticated(request):
+        raise HTTPException(status_code=401, detail="Unauthorized")
+        
+    res = sheets_handler.test_sheet_connection()
+    return JSONResponse(content=res)

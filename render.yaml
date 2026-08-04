@@ -1,9 +1,43 @@
+databases:
+  - name: evo-postgres
+    plan: free
+    databaseName: evolution
+    user: evo_user
+
 services:
   - type: web
-    name: whatsapp-inventory-bot
-    env: python
-    buildCommand: pip install -r requirements.txt
-    startCommand: uvicorn main:app --host 0.0.0.0 --port $PORT
+    name: evolution-api
+    env: docker
+    image: atendai/evolution-api:latest
+    plan: free
     envVars:
-      - key: PYTHON_VERSION
-        value: 3.11.4
+      - key: DATABASE_PROVIDER
+        value: postgresql
+      - key: DATABASE_CONNECTION_URI
+        fromDatabase:
+          name: evo-postgres
+          property: connectionString
+      - key: DATABASE_SAVE_DATA_INSTANCE
+        value: "true"
+      - key: DATABASE_SAVE_DATA_CHATS
+        value: "false"
+      - key: CACHE_REDIS_ENABLED
+        value: "false"
+      - key: CACHE_LOCAL_ENABLED
+        value: "true"
+      - key: AUTHENTICATION_API_KEY
+        value: "mosop-secure-global-api-key" # Change this in production
+      - key: AUTHENTICATION_TYPE
+        value: apikey
+
+  - type: web
+    name: mosop-farm-backend
+    env: python
+    plan: free
+    buildCommand: "pip install -r requirements.txt"
+    startCommand: "uvicorn main:app --host 0.0.0.0 --port $PORT"
+    envVars:
+      - key: EVOLUTION_API_URL
+        value: "https://evolution-api-YOUR_RENDER_URL.onrender.com" # Update this after deployment
+      - key: EVOLUTION_API_KEY
+        value: "mosop-secure-global-api-key"

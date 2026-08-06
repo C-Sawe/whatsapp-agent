@@ -75,3 +75,19 @@ To pull live inventory data from Google Sheets:
 3. Create a **Service Account** and download its JSON key file.
 4. Rename the downloaded file to `credentials.json` and put it in the root folder of this project (Make sure to add it to `.gitignore` so you don't commit secrets to GitHub).
 5. Open your Mosop Farm Inventory Google Sheet and share it as an Editor with the email address of the Service Account.
+
+---
+
+## 🤖 Vertex AI Integration & IAM Roles
+
+To allow the FastAPI backend to securely access Vertex AI (Gemini) without hardcoding API keys when deployed on Google Cloud Run:
+
+1. Ensure the **Vertex AI API** is enabled in your Google Cloud Project.
+2. In the Google Cloud Console, navigate to **IAM & Admin > IAM**.
+3. Locate the Service Account being used by your Cloud Run service (usually the Default Compute Service Account: `PROJECT_NUMBER-compute@developer.gserviceaccount.com`).
+4. Click the **Edit** (pencil) icon next to the service account.
+5. Click **Add Another Role**, search for **Vertex AI User**, and select it.
+6. Click **Save**.
+
+Your Cloud Run instance will now automatically use its Application Default Credentials (ADC) to authenticate with the Vertex AI Gemini models!
+

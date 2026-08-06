@@ -1,0 +1,44 @@
+version: '3.8'
+
+services:
+  postgres:
+    image: postgres:15-alpine
+    container_name: evolution_postgres
+    environment:
+      POSTGRES_DB: evolution
+      POSTGRES_USER: evolution_user
+      POSTGRES_PASSWORD: evolution_db_password_secure_placeholder
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    ports:
+      - "5432:5432"
+    restart: always
+
+  redis:
+    image: redis:alpine
+    container_name: evolution_redis
+    ports:
+      - "6379:6379"
+    restart: always
+
+  evolution-api:
+    image: evoapicloud/evolution-api:latest
+    container_name: evolution_api
+    ports:
+      - "8080:8080"
+    environment:
+      - SERVER_PORT=8080
+      - AUTHENTICATION_API_KEY=mosop-secure-global-api-key
+      - DATABASE_ENABLED=true
+      - DATABASE_PROVIDER=postgresql
+      - DATABASE_CONNECTION_URI=postgresql://evolution_user:evolution_db_password_secure_placeholder@postgres:5432/evolution?sslmode=disable
+      - CACHE_REDIS_ENABLED=true
+      - CACHE_REDIS_URI=redis://redis:6379
+      - WEBSOCKET_ENABLED=true
+    depends_on:
+      - postgres
+      - redis
+    restart: always
+
+volumes:
+  postgres_data:

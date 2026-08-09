@@ -19,6 +19,7 @@ export default function Orders() {
   const fetchOrders = async () => {
     try {
       const auth = localStorage.getItem('mosop_auth');
+      
       const res = await axios.get('/api/orders', {
         headers: { Authorization: auth }
       });
@@ -72,27 +73,47 @@ export default function Orders() {
       </div>
 
       <div className="bg-white border border-stone-200 rounded-sm shadow-sm overflow-hidden">
-        {loading ? (
-          <div className="p-8 text-center text-stone-500 font-bold uppercase tracking-widest text-xs animate-pulse">Scanning Data Grid...</div>
-        ) : orders.length === 0 ? (
-          <div className="p-8 text-center text-stone-500 font-bold uppercase tracking-widest text-xs">No entries found.</div>
-        ) : (
-          <div className="overflow-x-auto">
-            <table className="w-full text-left border-collapse">
-              <thead>
-                <tr className="bg-stone-50 border-b border-stone-200">
-                  <th className="p-4 text-[10px] font-black uppercase tracking-widest text-stone-500">Order ID</th>
-                  <th className="p-4 text-[10px] font-black uppercase tracking-widest text-stone-500">Customer Name</th>
-                  <th className="p-4 text-[10px] font-black uppercase tracking-widest text-stone-500">Phone</th>
-                  <th className="p-4 text-[10px] font-black uppercase tracking-widest text-stone-500">Product</th>
-                  <th className="p-4 text-[10px] font-black uppercase tracking-widest text-stone-500">Total Cost</th>
-                  <th className="p-4 text-[10px] font-black uppercase tracking-widest text-stone-500">Status</th>
-                  <th className="p-4 text-[10px] font-black uppercase tracking-widest text-stone-500">Timestamp</th>
-                  <th className="p-4 text-[10px] font-black uppercase tracking-widest text-stone-500">Action</th>
+        {/* Desktop Table View */}
+        <div className="hidden md:block overflow-x-auto table-scroll-mask">
+          <table className="w-full text-left border-collapse">
+            <thead>
+              <tr className="bg-stone-50 border-b border-stone-200">
+                <th className="p-4 text-[10px] font-black uppercase tracking-widest text-stone-500">Order ID</th>
+                <th className="p-4 text-[10px] font-black uppercase tracking-widest text-stone-500">Customer Name</th>
+                <th className="p-4 text-[10px] font-black uppercase tracking-widest text-stone-500">Phone</th>
+                <th className="p-4 text-[10px] font-black uppercase tracking-widest text-stone-500">Product</th>
+                <th className="p-4 text-[10px] font-black uppercase tracking-widest text-stone-500">Total Cost</th>
+                <th className="p-4 text-[10px] font-black uppercase tracking-widest text-stone-500">Status</th>
+                <th className="p-4 text-[10px] font-black uppercase tracking-widest text-stone-500">Timestamp</th>
+                <th className="p-4 text-[10px] font-black uppercase tracking-widest text-stone-500">Action</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-stone-200">
+              {loading && orders.length === 0 ? (
+                Array.from({ length: 5 }).map((_, i) => (
+                  <tr key={i} className="animate-pulse">
+                    <td className="p-4"><div className="h-4 bg-stone-200 rounded w-16"></div></td>
+                    <td className="p-4"><div className="h-4 bg-stone-200 rounded w-24"></div></td>
+                    <td className="p-4"><div className="h-4 bg-stone-200 rounded w-24"></div></td>
+                    <td className="p-4"><div className="h-4 bg-stone-200 rounded w-32"></div></td>
+                    <td className="p-4"><div className="h-4 bg-stone-200 rounded w-16"></div></td>
+                    <td className="p-4"><div className="h-6 bg-stone-200 rounded-sm w-16"></div></td>
+                    <td className="p-4"><div className="h-4 bg-stone-200 rounded w-20"></div></td>
+                    <td className="p-4"><div className="h-8 bg-stone-200 rounded-sm w-24"></div></td>
+                  </tr>
+                ))
+              ) : orders.length === 0 ? (
+                <tr>
+                  <td colSpan="8" className="p-12 text-center text-stone-500">
+                    <div className="flex flex-col items-center justify-center">
+                      <ShoppingBag className="w-12 h-12 text-stone-300 mb-3" />
+                      <h3 className="text-lg font-medium text-stone-900 mb-1">No orders found</h3>
+                      <p className="text-sm">New orders will appear here automatically.</p>
+                    </div>
+                  </td>
                 </tr>
-              </thead>
-              <tbody className="divide-y divide-stone-200">
-                {orders.map((order, i) => (
+              ) : (
+                orders.map((order, i) => (
                   <tr key={i} className="hover:bg-stone-50 transition-colors">
                     <td className="p-4 text-xs font-bold text-stone-900">{order['Order ID']}</td>
                     <td className="p-4 text-xs font-bold text-stone-900">{order['Customer Name'] || 'Unknown'}</td>
@@ -112,22 +133,87 @@ export default function Orders() {
                     <td className="p-4">
                       <button 
                         onClick={() => openReplyModal(order)}
-                        className="flex items-center gap-2 px-3 py-1.5 bg-stone-900 text-white rounded-sm hover:bg-stone-800 transition-colors text-xs font-bold uppercase tracking-widest"
+                        className="flex items-center gap-2 px-3 py-1.5 min-h-[44px] bg-stone-900 text-white rounded-sm hover:bg-stone-800 active:scale-95 transition-all text-xs font-bold uppercase tracking-widest"
                       >
                         <MessageCircle size={14} /> Reply
                       </button>
                     </td>
                   </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        )}
+                ))
+              )}
+            </tbody>
+          </table>
+        </div>
+
+        {/* Mobile Card View */}
+        <div className="md:hidden">
+          {loading && orders.length === 0 ? (
+            <div className="p-4 space-y-4">
+              {Array.from({ length: 4 }).map((_, i) => (
+                <div key={i} className="animate-pulse bg-stone-50 p-4 rounded-xl border border-stone-100">
+                  <div className="flex justify-between items-start mb-3">
+                    <div className="h-4 bg-stone-200 rounded w-20"></div>
+                    <div className="h-5 bg-stone-200 rounded-sm w-16"></div>
+                  </div>
+                  <div className="h-4 bg-stone-200 rounded w-1/2 mb-2"></div>
+                  <div className="h-4 bg-stone-200 rounded w-1/3 mb-4"></div>
+                  <div className="flex justify-between items-end mb-4">
+                    <div className="h-5 bg-stone-200 rounded w-24"></div>
+                    <div className="h-4 bg-stone-200 rounded w-20"></div>
+                  </div>
+                  <div className="h-[44px] bg-stone-200 rounded w-full"></div>
+                </div>
+              ))}
+            </div>
+          ) : orders.length === 0 ? (
+            <div className="p-12 text-center text-stone-500">
+              <ShoppingBag className="w-12 h-12 text-stone-300 mx-auto mb-3" />
+              <h3 className="text-lg font-medium text-stone-900 mb-1">No orders found</h3>
+              <p className="text-sm">Awaiting incoming orders.</p>
+            </div>
+          ) : (
+            <div className="grid grid-cols-1 gap-4 p-4">
+              {orders.map((order, i) => (
+                <div key={i} className="bg-white p-4 rounded-xl border border-stone-100 shadow-sm flex flex-col">
+                  <div className="flex justify-between items-start mb-2">
+                    <div>
+                      <p className="text-[10px] text-stone-400 font-bold uppercase tracking-widest">Order ID: {order['Order ID']}</p>
+                      <h4 className="font-bold text-stone-900 text-base">{order['Customer Name'] || 'Unknown'}</h4>
+                    </div>
+                    <span className={`px-2 py-1 rounded-sm text-[9px] font-black uppercase tracking-widest ${
+                      order['Payment Status'] === 'PAID' 
+                        ? 'bg-green-100 text-green-700' 
+                        : 'bg-yellow-100 text-yellow-700'
+                    }`}>
+                      {order['Payment Status']}
+                    </span>
+                  </div>
+                  <p className="text-sm text-stone-600 font-medium mb-1">{order['Phone Number']}</p>
+                  <p className="text-sm text-stone-900 font-medium mb-3">{order.Quantity}x {order.Product}</p>
+                  
+                  <div className="flex justify-between items-end mb-4">
+                    <div>
+                      <p className="text-[10px] text-stone-400 font-bold uppercase tracking-widest mb-0.5">Total Cost</p>
+                      <p className="font-black text-stone-900 text-sm">KSh {order['Total Cost']}</p>
+                    </div>
+                    <p className="text-xs text-stone-400">{order.Timestamp}</p>
+                  </div>
+                  <button 
+                    onClick={() => openReplyModal(order)}
+                    className="flex items-center justify-center gap-2 w-full min-h-[44px] bg-stone-900 text-white rounded-md hover:bg-stone-800 active:scale-95 transition-all text-xs font-bold uppercase tracking-widest mt-auto"
+                  >
+                    <MessageCircle size={14} /> Reply via WhatsApp
+                  </button>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
       </div>
 
       {/* Reply Modal */}
       {selectedOrder && (
-        <div className="fixed inset-0 bg-stone-900/80 backdrop-blur-sm flex items-center justify-center z-50 p-4">
+        <div className="fixed inset-0 bg-stone-900/80 backdrop-blur-sm flex items-center justify-center z-modal p-4">
           <div className="bg-white border border-stone-200 rounded-sm w-full max-w-lg relative shadow-xl">
             <div className="p-6 border-b border-stone-200 flex justify-between items-center bg-stone-50">
               <div>

@@ -3,6 +3,14 @@
 
 @theme {
   --font-sans: "Instrument Sans", ui-sans-serif, system-ui, sans-serif, "Apple Color Emoji", "Segoe UI Emoji", "Segoe UI Symbol", "Noto Color Emoji";
+  --z-base: 0;
+  --z-sticky: 20;
+  --z-filters: 30;
+  --z-overlay: 40;
+  --z-sidebar: 50;
+  --z-bottomnav: 50;
+  --z-modal: 60;
+  --z-toast: 70;
 }
 
 @layer base {
@@ -10,5 +18,24 @@
     background-color: var(--color-stone-50);
     color: var(--color-stone-900);
     font-family: var(--font-sans);
+    -webkit-tap-highlight-color: transparent;
+  }
+}
+
+@layer utilities {
+  .table-scroll-mask {
+    background:
+      linear-gradient(to right, white 30%, transparent),
+      linear-gradient(to right, transparent, white 70%) 100% 0;
+    background-repeat: no-repeat;
+    background-size: 20px 100%, 20px 100%;
+    background-attachment: local, scroll;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  * {
+    transition-duration: 0.01ms !important;
+    animation-duration: 0.01ms !important;
   }
 }

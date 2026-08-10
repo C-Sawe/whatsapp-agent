@@ -3,51 +3,55 @@ import { TrendingUp, Users, DollarSign, Store } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import KpiCard from '../components/KpiCard';
 import RevenueChart from '../components/RevenueChart';
+import api from '../api';
 
 const API_BASE = import.meta.env.VITE_API_BASE_URL || '';
 
 const DashboardOverview = () => {
   const [storeId, setStoreId] = useState('all');
   const [dateRange, setDateRange] = useState('30');
+  const [customStart, setCustomStart] = useState('');
+  const [customEnd, setCustomEnd] = useState('');
   const [salesData, setSalesData] = useState(null);
   const [cashierData, setCashierData] = useState([]);
   const [trendingData, setTrendingData] = useState([]);
+  const [supplierData, setSupplierData] = useState([]);
   const [loading, setLoading] = useState(true);
   const navigate = useNavigate();
 
   useEffect(() => {
     const fetchAnalytics = async () => {
       setLoading(true);
-      const token = localStorage.getItem('mosop_auth');
-      const headers = { 'Authorization': token };
-      
       const queryParams = new URLSearchParams();
       if (storeId && storeId !== 'all') queryParams.append('store_id', storeId);
       
       if (dateRange) {
-        const end = new Date();
-        const start = new Date();
-        start.setDate(end.getDate() - parseInt(dateRange));
-        queryParams.append('start_date', start.toISOString().split('T')[0]);
-        queryParams.append('end_date', end.toISOString().split('T')[0]);
+        if (dateRange === 'custom') {
+          if (customStart && customEnd) {
+            queryParams.append('start_date', customStart);
+            queryParams.append('end_date', customEnd);
+          }
+        } else {
+          const end = new Date();
+          const start = new Date();
+          start.setDate(end.getDate() - parseInt(dateRange));
+          queryParams.append('start_date', start.toISOString().split('T')[0]);
+          queryParams.append('end_date', end.toISOString().split('T')[0]);
+        }
       }
 
       try {
-        const [salesRes, cashiersRes, trendingRes] = await Promise.all([
-          fetch(`${API_BASE}/api/analytics/sales?${queryParams}`, { headers }),
-          fetch(`${API_BASE}/api/analytics/cashiers?${queryParams}`, { headers }),
-          fetch(`${API_BASE}/api/analytics/trending?${queryParams}`, { headers })
+        const [salesRes, cashiersRes, trendingRes, suppliersRes] = await Promise.all([
+          api.get(`/api/analytics/sales?${queryParams}`),
+          api.get(`/api/analytics/cashiers?${queryParams}`),
+          api.get(`/api/analytics/trending?${queryParams}`),
+          api.get(`/api/analytics/suppliers?${queryParams}`)
         ]);
 
-        if (salesRes.status === 401 || cashiersRes.status === 401 || trendingRes.status === 401) {
-          localStorage.removeItem('mosop_auth');
-          window.location.href = '/login';
-          return;
-        }
-
-        if (salesRes.ok) setSalesData(await salesRes.json());
-        if (cashiersRes.ok) setCashierData((await cashiersRes.json()).leaderboard || []);
-        if (trendingRes.ok) setTrendingData((await trendingRes.json()).trending || []);
+        setSalesData(salesRes.data);
+        setCashierData(cashiersRes.data.leaderboard || []);
+        setTrendingData(trendingRes.data.trending || []);
+        setSupplierData(suppliersRes.data.suppliers || []);
       } catch (err) {
         console.error("Failed to fetch analytics", err);
       }
@@ -55,7 +59,7 @@ const DashboardOverview = () => {
     };
 
     fetchAnalytics();
-  }, [storeId, dateRange]);
+  }, [storeId, dateRange, customStart, customEnd]);
 
   const formatCurrency = (val) => new Intl.NumberFormat('en-KE', { style: 'currency', currency: 'KES', minimumFractionDigits: 0 }).format(val);
 
@@ -92,7 +96,15 @@ const DashboardOverview = () => {
             <option value="7">Last 7 Days</option>
             <option value="30">Last 30 Days</option>
             <option value="90">Last 90 Days</option>
+            <option value="custom">Custom Range</option>
           </select>
+          {dateRange === 'custom' && (
+            <div className="flex items-center gap-1">
+              <input type="date" value={customStart} onChange={e => setCustomStart(e.target.value)} className="border border-stone-300 rounded-md py-1.5 px-2 text-sm focus:ring-green-500 focus:border-green-500 max-w-[130px]"/>
+              <span className="text-stone-400">-</span>
+              <input type="date" value={customEnd} onChange={e => setCustomEnd(e.target.value)} className="border border-stone-300 rounded-md py-1.5 px-2 text-sm focus:ring-green-500 focus:border-green-500 max-w-[130px]"/>
+            </div>
+          )}
         </div>
       </header>
 
@@ -129,8 +141,8 @@ const DashboardOverview = () => {
         {/* Sales Chart */}
         <RevenueChart data={salesData?.timeseries} />
 
-        {/* Two-Column Layout on Desktop */}
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+        {/* Column Layout on Desktop */}
+        <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
           {/* Cashier Leaderboard */}
           <div className="bg-white rounded-xl shadow-sm border border-gray-100 overflow-hidden">
             <div className="p-4 border-b border-gray-100 flex items-center gap-2">
@@ -181,6 +193,31 @@ const DashboardOverview = () => {
                 </li>
               ))}
               {trendingData.length === 0 && <li className="p-4 text-center text-sm text-gray-500">No trending data.</li>}
+            </ul>
+          </div>
+
+          {/* Top Suppliers */}
+          <div className="bg-white rounded-xl shadow-sm border border-gray-100 overflow-hidden">
+            <div className="p-4 border-b border-gray-100 flex items-center gap-2">
+              <Store className="w-5 h-5 text-gray-500" />
+              <h2 className="text-sm font-bold text-gray-700">Top Suppliers</h2>
+            </div>
+            <ul className="divide-y divide-gray-100">
+              {supplierData.slice(0, 10).map((s, i) => (
+                <li key={i} className="p-4 flex items-center justify-between hover:bg-gray-50">
+                  <div className="flex items-center gap-3">
+                    <div className="w-6 h-6 text-gray-400 font-bold text-xs flex items-center justify-center">{i + 1}</div>
+                    <div>
+                      <p className="text-sm font-medium text-gray-800 line-clamp-1">{s.supplier || 'Unknown'}</p>
+                      <p className="text-xs text-gray-500">{s.quantity} Units Sold</p>
+                    </div>
+                  </div>
+                  <div className="text-right">
+                    <p className="text-sm font-bold text-green-700">{formatCurrency(s.revenue)}</p>
+                  </div>
+                </li>
+              ))}
+              {supplierData.length === 0 && <li className="p-4 text-center text-sm text-gray-500">No supplier data.</li>}
             </ul>
           </div>
         </div>

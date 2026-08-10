@@ -3,11 +3,38 @@
   <head>
     <meta charset="UTF-8" />
     <link rel="icon" type="image/webp" href="https://mosopfarminputs.co.ke/images/logo_transparent.webp" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
     <title>Mosop - Portal</title>
+    <style>
+      body, html { margin: 0; padding: 0; background-color: #fafaf9; }
+      .app-preloader {
+        position: fixed;
+        top: 0; left: 0; right: 0; bottom: 0;
+        display: flex;
+        flex-direction: column;
+        justify-content: center;
+        align-items: center;
+        z-index: 9999;
+      }
+      .app-spinner {
+        width: 40px;
+        height: 40px;
+        border: 3px solid #e7e5e4;
+        border-top-color: #15803d;
+        border-radius: 50%;
+        animation: app-spin 1s linear infinite;
+      }
+      @keyframes app-spin {
+        to { transform: rotate(360deg); }
+      }
+    </style>
   </head>
-  <body>
-    <div id="root"></div>
+  <body class="antialiased transition-colors duration-200">
+    <div id="root">
+      <div class="app-preloader">
+        <div class="app-spinner"></div>
+      </div>
+    </div>
     <script type="module" src="/src/main.jsx"></script>
   </body>
 </html>

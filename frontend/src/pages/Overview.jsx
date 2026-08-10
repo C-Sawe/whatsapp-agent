@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { Home, Server, Cpu, Database, Activity } from 'lucide-react';
-import axios from 'axios';
+import api from '../api';
 
 export default function Overview() {
   const [metrics, setMetrics] = useState(null);
@@ -10,7 +10,7 @@ export default function Overview() {
     const fetchMetrics = async () => {
       try {
         const auth = localStorage.getItem('mosop_auth');
-        const res = await axios.get('/api/system-metrics', {
+        const res = await api.get('/api/system-metrics', {
           headers: { Authorization: auth }
         });
         setMetrics(res.data);

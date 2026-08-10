@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { ShoppingBag, MessageCircle, X } from 'lucide-react';
-import axios from 'axios';
+import api from '../api';
 
 export default function Orders() {
   const [orders, setOrders] = useState([]);
@@ -20,7 +20,7 @@ export default function Orders() {
     try {
       const auth = localStorage.getItem('mosop_auth');
       
-      const res = await axios.get('/api/orders', {
+      const res = await api.get('/api/orders', {
         headers: { Authorization: auth }
       });
       setOrders(res.data.orders.reverse()); // Newest first
@@ -47,7 +47,7 @@ export default function Orders() {
     setSending(true);
     try {
       const auth = localStorage.getItem('mosop_auth');
-      await axios.post('/api/orders/reply', 
+      await api.post('/api/orders/reply', 
         { phone: selectedOrder['Phone Number'], message: replyText },
         { headers: { Authorization: auth } }
       );

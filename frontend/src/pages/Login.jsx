@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { ShieldCheck, Lock } from 'lucide-react';
-import axios from 'axios';
+import api, { setAccessToken } from '../api';
 
 export default function Login({ setAuth }) {
   const [username, setUsername] = useState('');
@@ -14,10 +14,9 @@ export default function Login({ setAuth }) {
     setError('');
 
     try {
-      const res = await axios.post('/api/login', { username, password });
+      const res = await api.post('/api/login', { username, password });
       
-      const authHeader = 'Bearer ' + res.data.token;
-      localStorage.setItem('mosop_auth', authHeader);
+      setAccessToken(res.data.token);
       setAuth(true);
     } catch (err) {
       if (err.response && err.response.status === 429) {

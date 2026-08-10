@@ -1,6 +1,6 @@
 import os
 import json
-from fastapi import FastAPI, Request, HTTPException
+from fastapi import FastAPI, Request, HTTPException, Response, Cookie
 import httpx
 from groq import Groq
 import sheets_handler
@@ -12,15 +12,28 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse
 from pydantic import BaseModel
 import jwt
+from slowapi import Limiter, _rate_limit_exceeded_handler
+from slowapi.util import get_remote_address
+from slowapi.errors import RateLimitExceeded
 from datetime import datetime, timedelta, timezone
 import time
 import psycopg2
+from psycopg2 import pool
 from typing import Optional
 from fastapi import Query
 
 PG_DSN = "host=localhost dbname=evolution user=evolution_user password=evolution_db_password_secure_placeholder"
 
+# Initialize global connection pool
+try:
+    db_pool = psycopg2.pool.SimpleConnectionPool(1, 20, PG_DSN)
+except Exception as e:
+    print("Failed to initialize database pool:", e)
+
+limiter = Limiter(key_func=get_remote_address)
 app = FastAPI(title="Mosop Farm Inputs API")
+app.state.limiter = limiter
+app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 
 app.add_middleware(
     CORSMiddleware,
@@ -305,20 +318,33 @@ LOCKOUT_TIME = 900 # 15 minutes
 def verify_credentials(credentials: HTTPAuthorizationCredentials = Depends(security)):
     try:
         payload = jwt.decode(credentials.credentials, JWT_SECRET, algorithms=["HS256"])
+        if payload.get("type") == "refresh":
+            raise HTTPException(status_code=401, detail="Cannot use refresh token as access token")
         if payload.get("sub") != "MosopAdmin@mosopfarminputs.co.ke":
             raise HTTPException(status_code=401, detail="Invalid token subject")
-        return payload.get("sub")
+        return payload
     except jwt.ExpiredSignatureError:
         raise HTTPException(status_code=401, detail="Token expired")
     except jwt.InvalidTokenError:
         raise HTTPException(status_code=401, detail="Invalid token")
+
+def get_db_cursor(token_data: dict = Depends(verify_credentials)):
+    conn = db_pool.getconn()
+    try:
+        cur = conn.cursor()
+        scope = token_data.get("scope", "all")
+        cur.execute("SET LOCAL app.store_id = %s", (scope,))
+        yield cur
+    finally:
+        db_pool.putconn(conn)
 
 class LoginRequest(BaseModel):
     username: str
     password: str
 
 @app.post("/api/login")
-def api_login(req: LoginRequest, request: Request):
+@limiter.limit("5/minute")
+def api_login(req: LoginRequest, request: Request, response: Response):
     client_ip = request.client.host
     now = time.time()
     
@@ -336,14 +362,55 @@ def api_login(req: LoginRequest, request: Request):
     
     if correct_username and correct_password:
         LOGIN_ATTEMPTS[client_ip] = [0, None]
-        expiration = datetime.now(timezone.utc) + timedelta(hours=4)
-        token = jwt.encode({"sub": req.username, "exp": expiration}, JWT_SECRET, algorithm="HS256")
-        return {"token": token}
+        
+        access_exp = datetime.now(timezone.utc) + timedelta(minutes=15)
+        access_token = jwt.encode({"sub": req.username, "scope": "all", "exp": access_exp}, JWT_SECRET, algorithm="HS256")
+        
+        refresh_exp = datetime.now(timezone.utc) + timedelta(days=7)
+        refresh_token = jwt.encode({"sub": req.username, "scope": "all", "exp": refresh_exp, "type": "refresh"}, JWT_SECRET, algorithm="HS256")
+        
+        response.set_cookie(
+            key="refresh_token", 
+            value=refresh_token, 
+            httponly=True, 
+            secure=True, 
+            samesite="strict", 
+            max_age=7*24*60*60
+        )
+        return {"token": access_token}
     else:
         LOGIN_ATTEMPTS[client_ip][0] += 1
         if LOGIN_ATTEMPTS[client_ip][0] >= MAX_ATTEMPTS:
             LOGIN_ATTEMPTS[client_ip][1] = now + LOCKOUT_TIME
         raise HTTPException(status_code=401, detail="Incorrect email or password")
+
+@app.post("/api/refresh")
+@limiter.limit("5/minute")
+def api_refresh(request: Request, response: Response):
+    refresh_token = request.cookies.get("refresh_token")
+    if not refresh_token:
+        raise HTTPException(status_code=401, detail="Missing refresh token")
+        
+    try:
+        payload = jwt.decode(refresh_token, JWT_SECRET, algorithms=["HS256"])
+        if payload.get("type") != "refresh":
+            raise HTTPException(status_code=401, detail="Invalid token type")
+            
+        access_exp = datetime.now(timezone.utc) + timedelta(minutes=15)
+        access_token = jwt.encode({"sub": payload["sub"], "scope": payload.get("scope", "all"), "exp": access_exp}, JWT_SECRET, algorithm="HS256")
+        
+        return {"token": access_token}
+    except jwt.ExpiredSignatureError:
+        response.delete_cookie("refresh_token")
+        raise HTTPException(status_code=401, detail="Refresh token expired")
+    except jwt.InvalidTokenError:
+        response.delete_cookie("refresh_token")
+        raise HTTPException(status_code=401, detail="Invalid refresh token")
+        
+@app.post("/api/logout")
+def api_logout(response: Response):
+    response.delete_cookie("refresh_token")
+    return {"status": "success"}
 
 # --- Configuration API ---
 
@@ -429,12 +496,9 @@ def api_get_inventory(
     search: Optional[str] = None,
     page: int = Query(1, ge=1),
     page_size: int = Query(50, ge=1, le=500),
-    username: str = Depends(verify_credentials)
+    cur = Depends(get_db_cursor)
 ):
     try:
-        conn = psycopg2.connect(PG_DSN)
-        cur = conn.cursor()
-        
         where_clauses = []
         params = []
         if store_id is not None:
@@ -486,12 +550,39 @@ def api_get_inventory(
             
         rows = cur.fetchall()
         
+        # Calculate 30-day velocity for runway prediction
+        skus = [r[0] for r in rows] if rows else []
+        velocities = {}
+        if skus:
+            thirty_days_ago = datetime.now() - timedelta(days=30)
+            cur.execute("""
+                SELECT sku, SUM(quantity)/30.0
+                FROM sales_analytics
+                WHERE sku = ANY(%s) AND transaction_time >= %s
+                GROUP BY sku
+            """, (skus, thirty_days_ago))
+            velocities = {row[0]: float(row[1]) for row in cur.fetchall()}
+        
         inventory = []
         for r in rows:
+            sku = r[0]
+            stock = float(r[2]) if r[2] is not None else 0
+            
+            # Predict runway
+            daily_sales = velocities.get(sku, 0)
+            runway = None
+            if stock <= 0:
+                runway = 0
+            elif daily_sales > 0:
+                runway = round(stock / daily_sales)
+            else:
+                runway = 9999 # No recent sales, technically infinite runway
+                
             inventory.append({
-                "sku": r[0],
+                "sku": sku,
                 "description": r[1] or "",
-                "stock_quantity": float(r[2]) if r[2] is not None else 0,
+                "stock_quantity": stock,
+                "runway_days": runway,
                 "reorder_point": float(r[3]) if r[3] is not None else 0,
                 "category": r[4] or "Uncategorized",
                 "supplier": r[5] or "Unknown",
@@ -524,7 +615,6 @@ def api_get_inventory(
         suppliers = [row[0] for row in cur.fetchall()]
             
         cur.close()
-        conn.close()
         
         return {
             "status": "success",
@@ -541,6 +631,79 @@ def api_get_inventory(
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
+@app.get("/api/inventory/movement")
+@limiter.limit("60/minute")
+def api_get_inventory_movement(
+    sku: str,
+    store_id: Optional[int] = None,
+    days: int = Query(90, ge=7, le=365),
+    cur = Depends(get_db_cursor),
+    request: Request = None
+):
+    try:
+        start_date = datetime.now() - timedelta(days=days)
+        
+        where_clause = "WHERE sku = %s AND transaction_time >= %s"
+        params = [sku, start_date]
+        
+        if store_id is not None:
+            where_clause += " AND store_id = %s"
+            params.append(store_id)
+            
+        # Get daily movement
+        cur.execute(f"""
+            SELECT transaction_time::date as dt, SUM(quantity), SUM(revenue)
+            FROM sales_analytics
+            {where_clause}
+            GROUP BY dt
+            ORDER BY dt ASC;
+        """, tuple(params))
+        
+        movement_rows = cur.fetchall()
+        
+        movement_data = []
+        total_qty = 0
+        total_revenue = 0
+        
+        for r in movement_rows:
+            qty = float(r[1]) if r[1] is not None else 0
+            rev = float(r[2]) if r[2] is not None else 0
+            total_qty += qty
+            total_revenue += rev
+            
+            movement_data.append({
+                "date": r[0].isoformat() if r[0] else "",
+                "quantity": qty,
+                "revenue": rev
+            })
+            
+        # Get top cashiers for this SKU
+        cur.execute(f"""
+            SELECT cashier_name, SUM(quantity) as qty
+            FROM sales_analytics
+            {where_clause}
+            GROUP BY cashier_name
+            ORDER BY qty DESC
+            LIMIT 3;
+        """, tuple(params))
+        
+        cashiers = [{"name": r[0] or "Unknown", "quantity": float(r[1])} for r in cur.fetchall()]
+        
+        cur.close()
+        
+        return {
+            "status": "success",
+            "sku": sku,
+            "days": days,
+            "total_sold": total_qty,
+            "total_revenue": total_revenue,
+            "movement": movement_data,
+            "top_cashiers": cashiers
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 @app.get("/api/system-metrics")
 def api_system_metrics(username: str = Depends(verify_credentials)):
     cpu = psutil.cpu_percent(interval=0.1)
@@ -554,11 +717,8 @@ def api_system_metrics(username: str = Depends(verify_credentials)):
 
 # --- Analytics API Endpoints ---
 @app.get("/api/analytics/sales")
-def api_get_sales(store_id: Optional[int] = None, start_date: Optional[str] = None, end_date: Optional[str] = None, username: str = Depends(verify_credentials)):
+def api_get_sales(store_id: Optional[int] = None, start_date: Optional[str] = None, end_date: Optional[str] = None, cur = Depends(get_db_cursor)):
     try:
-        conn = psycopg2.connect(PG_DSN)
-        cur = conn.cursor()
-        
         where_clauses = []
         params = []
         if start_date and end_date:
@@ -586,7 +746,6 @@ def api_get_sales(store_id: Optional[int] = None, start_date: Optional[str] = No
         timeseries = [{"date": str(row[0]), "revenue": float(row[1] or 0), "profit": float(row[2] or 0)} for row in cur.fetchall()]
         
         cur.close()
-        conn.close()
         
         total_rev = float(totals[0] or 0)
         total_prof = float(totals[1] or 0)
@@ -601,11 +760,8 @@ def api_get_sales(store_id: Optional[int] = None, start_date: Optional[str] = No
         raise HTTPException(status_code=500, detail=str(e))
 
 @app.get("/api/analytics/cashiers")
-def api_get_cashiers(store_id: Optional[int] = None, start_date: Optional[str] = None, end_date: Optional[str] = None, username: str = Depends(verify_credentials)):
+def api_get_cashiers(store_id: Optional[int] = None, start_date: Optional[str] = None, end_date: Optional[str] = None, cur = Depends(get_db_cursor)):
     try:
-        conn = psycopg2.connect(PG_DSN)
-        cur = conn.cursor()
-        
         where_clauses = []
         params = []
         if start_date and end_date:
@@ -621,26 +777,34 @@ def api_get_cashiers(store_id: Optional[int] = None, start_date: Optional[str] =
         where_sql = "WHERE " + " AND ".join(where_clauses)
             
         cur.execute(f"""
-            SELECT cashier_name, SUM(revenue), COUNT(DISTINCT transaction_number)
+            SELECT cashier_name, SUM(revenue), COUNT(DISTINCT transaction_number), SUM(profit), SUM(quantity)
             FROM sales_analytics
             {where_sql}
             GROUP BY cashier_name
             ORDER BY SUM(revenue) DESC
         """, tuple(params))
-        leaderboard = [{"cashier_name": row[0], "total_revenue": float(row[1] or 0), "transactions_count": row[2]} for row in cur.fetchall()]
+        
+        leaderboard = []
+        for row in cur.fetchall():
+            rev = float(row[1] or 0)
+            count = row[2] or 1
+            leaderboard.append({
+                "cashier_name": row[0] or "Unknown",
+                "total_revenue": rev,
+                "transactions_count": count,
+                "total_profit": float(row[3] or 0),
+                "quantity_sold": float(row[4] or 0),
+                "average_transaction_value": rev / count if count > 0 else 0
+            })
         
         cur.close()
-        conn.close()
         return {"status": "success", "leaderboard": leaderboard}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
 @app.get("/api/analytics/trending")
-def api_get_trending(store_id: Optional[int] = None, start_date: Optional[str] = None, end_date: Optional[str] = None, username: str = Depends(verify_credentials)):
+def api_get_trending(store_id: Optional[int] = None, start_date: Optional[str] = None, end_date: Optional[str] = None, cur = Depends(get_db_cursor)):
     try:
-        conn = psycopg2.connect(PG_DSN)
-        cur = conn.cursor()
-        
         where_clauses = []
         params = []
         if start_date and end_date:
@@ -667,17 +831,143 @@ def api_get_trending(store_id: Optional[int] = None, start_date: Optional[str] =
         trending = [{"sku": row[0], "description": row[1] or "Unknown", "quantity": float(row[2] or 0), "revenue": float(row[3] or 0)} for row in cur.fetchall()]
         
         cur.close()
-        conn.close()
         return {"status": "success", "trending": trending}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
-@app.get("/api/analytics/debt")
-def api_get_debt(page: int = Query(1, ge=1), page_size: int = Query(50, ge=1, le=500), username: str = Depends(verify_credentials)):
+@app.get("/api/analytics/suppliers")
+def api_get_suppliers(store_id: Optional[int] = None, start_date: Optional[str] = None, end_date: Optional[str] = None, cur = Depends(get_db_cursor)):
     try:
-        conn = psycopg2.connect(PG_DSN)
-        cur = conn.cursor()
+        where_clauses = []
+        params = []
+        if start_date and end_date:
+            where_clauses.append("s.transaction_time >= %s AND s.transaction_time <= %s")
+            params.extend([f"{start_date} 00:00:00", f"{end_date} 23:59:59"])
+        else:
+            where_clauses.append("s.transaction_time >= CURRENT_DATE - INTERVAL '30 days'")
+            
+        if store_id is not None:
+            where_clauses.append("s.store_id = %s")
+            params.append(store_id)
+            
+        where_sql = "WHERE " + " AND ".join(where_clauses)
+            
+        cur.execute(f"""
+            SELECT l.supplier, SUM(s.revenue), SUM(s.profit), SUM(s.quantity)
+            FROM sales_analytics s
+            LEFT JOIN live_inventory l ON s.sku = l.sku AND s.store_id = l.store_id
+            {where_sql} AND l.supplier IS NOT NULL
+            GROUP BY l.supplier
+            ORDER BY SUM(s.revenue) DESC
+        """, tuple(params))
+        suppliers = [{"supplier": row[0], "revenue": float(row[1] or 0), "profit": float(row[2] or 0), "quantity": float(row[3] or 0)} for row in cur.fetchall()]
         
+        cur.close()
+        return {"status": "success", "suppliers": suppliers}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.get("/api/analytics/quarters")
+def api_get_quarters(store_id: Optional[int] = None, cur = Depends(get_db_cursor)):
+    try:
+        store_filter = ""
+        params = []
+        if store_id is not None:
+            store_filter = "WHERE store_id = %s"
+            params.append(store_id)
+        else:
+            store_filter = ""
+
+        # Revenue
+        cur.execute(f"""
+            SELECT 
+                'Q' || EXTRACT(QUARTER FROM transaction_time) || ' ' || EXTRACT(YEAR FROM transaction_time) as q_name,
+                EXTRACT(YEAR FROM transaction_time) as q_year,
+                EXTRACT(QUARTER FROM transaction_time) as q_num,
+                SUM(revenue)
+            FROM sales_analytics
+            {store_filter}
+            GROUP BY q_name, q_year, q_num
+            ORDER BY q_year DESC, q_num DESC
+            LIMIT 8
+        """, tuple(params))
+        quarters_raw = cur.fetchall()
+        
+        results = []
+        for q_name, q_year, q_num, rev in quarters_raw:
+            if q_num == 1:
+                start_date = f"{int(q_year)}-01-01 00:00:00"
+                end_date = f"{int(q_year)}-03-31 23:59:59"
+            elif q_num == 2:
+                start_date = f"{int(q_year)}-04-01 00:00:00"
+                end_date = f"{int(q_year)}-06-30 23:59:59"
+            elif q_num == 3:
+                start_date = f"{int(q_year)}-07-01 00:00:00"
+                end_date = f"{int(q_year)}-09-30 23:59:59"
+            else:
+                start_date = f"{int(q_year)}-10-01 00:00:00"
+                end_date = f"{int(q_year)}-12-31 23:59:59"
+
+            cur.execute(f"""
+                WITH Ranked AS (
+                    SELECT cashier_name, SUM(revenue) as rev,
+                    ROW_NUMBER() OVER(ORDER BY SUM(revenue) DESC) as rn
+                    FROM sales_analytics
+                    WHERE transaction_time >= %s AND transaction_time <= %s
+                    {("AND store_id = " + str(store_id)) if store_id else ""}
+                    GROUP BY cashier_name
+                )
+                SELECT cashier_name FROM Ranked WHERE rn = 1
+            """, (start_date, end_date))
+            best_cashier_row = cur.fetchone()
+            best_cashier = best_cashier_row[0] if best_cashier_row else "N/A"
+
+            cur.execute(f"""
+                WITH Ranked AS (
+                    SELECT sku, SUM(revenue) as rev,
+                    ROW_NUMBER() OVER(ORDER BY SUM(revenue) DESC) as rn
+                    FROM sales_analytics
+                    WHERE transaction_time >= %s AND transaction_time <= %s
+                    {("AND store_id = " + str(store_id)) if store_id else ""}
+                    GROUP BY sku
+                )
+                SELECT l.description FROM Ranked r
+                LEFT JOIN live_inventory l ON r.sku = l.sku
+                WHERE r.rn = 1 LIMIT 1
+            """, (start_date, end_date))
+            best_product_row = cur.fetchone()
+            best_product = best_product_row[0] if best_product_row else "N/A"
+
+            cur.execute(f"""
+                WITH Ranked AS (
+                    SELECT TO_CHAR(transaction_time, 'Month') as m_name, SUM(revenue) as rev,
+                    ROW_NUMBER() OVER(ORDER BY SUM(revenue) DESC) as rn
+                    FROM sales_analytics
+                    WHERE transaction_time >= %s AND transaction_time <= %s
+                    {("AND store_id = " + str(store_id)) if store_id else ""}
+                    GROUP BY TO_CHAR(transaction_time, 'Month')
+                )
+                SELECT m_name FROM Ranked WHERE rn = 1
+            """, (start_date, end_date))
+            best_month_row = cur.fetchone()
+            best_month = best_month_row[0].strip() if best_month_row else "N/A"
+
+            results.append({
+                "quarter": q_name,
+                "revenue": float(rev or 0),
+                "best_cashier": best_cashier,
+                "best_product": best_product,
+                "best_month": best_month
+            })
+            
+        cur.close()
+        return {"status": "success", "quarters": results}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.get("/api/analytics/debt")
+def api_get_debt(page: int = Query(1, ge=1), page_size: int = Query(50, ge=1, le=500), cur = Depends(get_db_cursor)):
+    try:
         offset = (page - 1) * page_size
         
         cur.execute("SELECT COUNT(*) FROM customer_debt WHERE outstanding_debt > 0")
@@ -705,7 +995,6 @@ def api_get_debt(page: int = Query(1, ge=1), page_size: int = Query(50, ge=1, le
         total_debt = cur.fetchone()[0]
         
         cur.close()
-        conn.close()
         
         total_pages = (total_debtors + page_size - 1) // page_size if total_debtors > 0 else 1
         
@@ -722,11 +1011,8 @@ def api_get_debt(page: int = Query(1, ge=1), page_size: int = Query(50, ge=1, le
         raise HTTPException(status_code=500, detail=str(e))
 
 @app.get("/api/inventory/prices")
-def api_get_inventory_prices(page: int = Query(1, ge=1), page_size: int = Query(50, ge=1, le=500), username: str = Depends(verify_credentials)):
+def api_get_inventory_prices(page: int = Query(1, ge=1), page_size: int = Query(50, ge=1, le=500), cur = Depends(get_db_cursor)):
     try:
-        conn = psycopg2.connect(PG_DSN)
-        cur = conn.cursor()
-        
         offset = (page - 1) * page_size
         
         cur.execute("SELECT COUNT(*) FROM live_inventory;")
@@ -750,7 +1036,6 @@ def api_get_inventory_prices(page: int = Query(1, ge=1), page_size: int = Query(
         } for row in cur.fetchall()]
         
         cur.close()
-        conn.close()
         
         return {
             "status": "success",

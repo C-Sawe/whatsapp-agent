@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { MessageSquare, Database, LogOut, PackageSearch, LayoutGrid, Activity, Cpu, HardDrive } from 'lucide-react';
-import axios from 'axios';
+import api from '../api';
 
 export default function Hub({ setAuth }) {
   const navigate = useNavigate();
@@ -16,10 +16,8 @@ export default function Hub({ setAuth }) {
   useEffect(() => {
     const fetchMetrics = async () => {
       try {
-        const token = localStorage.getItem('mosop_auth');
-        const res = await axios.get('/api/system-metrics', {
-          headers: { Authorization: token }
-        });
+        const res = await api.get('/api/system-metrics', {
+          });
         setMetrics(res.data);
       } catch (err) {
         console.error("Failed to fetch metrics", err);

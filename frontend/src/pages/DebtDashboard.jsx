@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import axios from 'axios';
+import api from '../api';
 import { DollarSign, AlertCircle } from 'lucide-react';
 import KpiCard from '../components/KpiCard';
 import DebtorsLeaderboard from '../components/DebtorsLeaderboard';
@@ -15,9 +15,7 @@ export default function DebtDashboard() {
     const fetchDebt = async () => {
       try {
         setLoading(true);
-        const token = localStorage.getItem('mosop_auth');
-        const res = await axios.get('/api/analytics/debt', {
-          headers: { Authorization: token },
+        const res = await api.get('/api/analytics/debt', {
           params: { page, page_size: pageSize }
         });
         if (res.data.status === 'success') {

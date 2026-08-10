@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { NavLink, Outlet, useNavigate, useLocation } from 'react-router-dom';
-import { Home, Settings, ShoppingBag, LogOut, ArrowLeft, Menu, X, Database, Users } from 'lucide-react';
+import { Home, Settings, ShoppingBag, LogOut, ArrowLeft, Menu, X, Database, Users, Calendar, DollarSign } from 'lucide-react';
+import api, { setAccessToken } from '../api';
 
 export default function Layout({ setAuth }) {
   const navigate = useNavigate();
@@ -8,8 +9,11 @@ export default function Layout({ setAuth }) {
   const [isSidebarOpen, setIsSidebarOpen] = useState(false);
   const sidebarRef = useRef(null);
 
-  const logout = () => {
-    localStorage.removeItem('mosop_auth');
+  const logout = async () => {
+    try {
+      await api.post('/api/logout');
+    } catch (e) {}
+    setAccessToken(null);
     setAuth(false);
     navigate('/login');
   };
@@ -19,6 +23,9 @@ export default function Layout({ setAuth }) {
     if (location.pathname === '/inventory') return 'INVENTORY SYNC';
     if (location.pathname === '/whatsapp/orders') return 'ORDERS';
     if (location.pathname === '/whatsapp/config') return 'CONFIGURATIONS';
+    if (location.pathname === '/debt') return 'ACCOUNTS RECEIVABLE';
+    if (location.pathname === '/staff') return 'STAFF PERFORMANCE';
+    if (location.pathname === '/quarterly-reports') return 'QUARTERLY REPORTS';
     return 'DASHBOARD';
   };
 
@@ -62,19 +69,23 @@ export default function Layout({ setAuth }) {
   }, [isSidebarOpen]);
 
   return (
-    <div className="min-h-screen bg-stone-50 flex selection:bg-green-600/20 relative">
-      {isSidebarOpen && (
-        <div 
-          className="fixed inset-0 bg-black/50 z-overlay md:hidden" 
-          onClick={toggleSidebar}
-        />
-      )}
+    <div className="flex h-screen bg-stone-50 transition-colors">
+      
+      {/* Sidebar Overlay */}
+      <div 
+        className={`fixed inset-0 bg-stone-900/50 backdrop-blur-sm z-40 transition-opacity duration-300 md:hidden ${
+          isSidebarOpen ? 'opacity-100' : 'opacity-0 pointer-events-none'
+        }`}
+        onClick={() => setIsSidebarOpen(false)}
+      />
 
+      {/* Desktop & Mobile Sidebar */}
       <aside 
         ref={sidebarRef}
-        className={`fixed inset-y-0 left-0 z-sidebar w-64 bg-stone-900 text-stone-300 flex flex-col border-r border-stone-800 transform transition-transform duration-300 ease-in-out md:relative md:translate-x-0 ${isSidebarOpen ? 'translate-x-0' : '-translate-x-full'}`}
-      >
-        <div className="p-6 border-b border-stone-800 flex items-center justify-between min-h-[64px]">
+        className={`fixed md:static inset-y-0 left-0 z-50 w-64 bg-stone-900 text-stone-300 transform transition-transform duration-300 ease-in-out flex flex-col ${
+          isSidebarOpen ? 'translate-x-0' : '-translate-x-full md:translate-x-0'
+        }`}
+      >  <div className="p-6 border-b border-stone-800 flex items-center justify-between min-h-[64px]">
           <div className="flex-1 text-center">
             <img src="https://mosopfarminputs.co.ke/images/logo_transparent.webp" alt="Mosop Farm Inputs Logo" className="h-12 object-contain mx-auto mb-3" />
             <p className="text-[9px] font-extrabold uppercase tracking-[0.2em] text-stone-500">Central Command</p>
@@ -102,8 +113,13 @@ export default function Layout({ setAuth }) {
           </NavLink>
           <NavLink to="/debt" className={({isActive}) => `w-full flex items-center gap-3 px-3 py-2.5 rounded-sm transition-all duration-200 group focus-visible:ring-2 focus-visible:ring-green-500 outline-none ${isActive ? 'bg-green-600 text-white font-bold' : 'hover:bg-stone-800 hover:text-white'}`}>
             <Users className="w-4 h-4 shrink-0" />
-            <span className="text-[10px] uppercase tracking-widest">Accounts</span>
+            <span className="text-[10px] uppercase tracking-widest">Accounts Rec.</span>
           </NavLink>
+          <NavLink to="/quarterly-reports" className={({isActive}) => `w-full flex items-center gap-3 px-3 py-2.5 rounded-sm transition-all duration-200 group focus-visible:ring-2 focus-visible:ring-green-500 outline-none ${isActive ? 'bg-green-600 text-white font-bold' : 'hover:bg-stone-800 hover:text-white'}`}>
+            <Calendar className="w-4 h-4 shrink-0" />
+            <span className="text-[10px] uppercase tracking-widest">Quarterly Reports</span>
+          </NavLink>
+
           <NavLink to="/whatsapp/config" className={({isActive}) => `w-full flex items-center gap-3 px-3 py-2.5 rounded-sm transition-all duration-200 group focus-visible:ring-2 focus-visible:ring-green-500 outline-none ${isActive ? 'bg-green-600 text-white font-bold' : 'hover:bg-stone-800 hover:text-white'}`}>
             <Settings className="w-4 h-4 shrink-0" />
             <span className="text-[10px] uppercase tracking-widest">Configurations</span>
@@ -118,29 +134,20 @@ export default function Layout({ setAuth }) {
         </div>
       </aside>
 
-      <main className="flex-1 flex flex-col min-w-0 min-h-screen">
-        <header className="h-16 bg-white border-b border-stone-200 flex items-center justify-between px-4 md:px-8 z-sticky sticky top-0 shrink-0">
-          <div className="flex items-center gap-3 md:gap-4 overflow-hidden">
+      <main className="flex-1 flex flex-col h-full overflow-y-auto w-full relative">
+        <header className="sticky top-0 z-30 bg-white/80 backdrop-blur-md border-b border-stone-200 px-4 py-4 flex items-center justify-between shadow-sm transition-colors">
+          <div className="flex items-center gap-3">
             <button 
-              onClick={toggleSidebar} 
-              aria-label="Open menu"
-              aria-expanded={isSidebarOpen}
-              className="md:hidden min-h-[44px] min-w-[44px] -ml-2 flex items-center justify-center text-stone-500 hover:bg-stone-100 rounded-md focus-visible:ring-2 focus-visible:ring-green-500 outline-none"
+              onClick={toggleSidebar}
+              className="p-1 md:hidden hover:bg-stone-100 rounded-lg transition-colors text-stone-700 active:scale-95"
+              aria-label="Toggle Menu"
             >
-              <Menu className="w-5 h-5" />
+              <Menu className="w-6 h-6" />
             </button>
-            <div className="hidden sm:block h-2 w-2 shrink-0 rounded-full bg-green-500 animate-pulse"></div>
-            <h1 className="text-[10px] sm:text-xs font-black uppercase tracking-[0.2em] text-stone-900 truncate">
-              {getPageTitle()} / Protocol Active
-            </h1>
+            <h2 className="text-sm font-black text-stone-900 tracking-widest">{getPageTitle()}</h2>
           </div>
-
-          <div className="flex items-center gap-6">
-            <div className="text-right hidden sm:block">
-              <p className="text-[9px] font-black uppercase tracking-widest text-stone-400">Security Clearance</p>
-              <p className="text-[10px] font-bold text-stone-900">Level 01 Administrator</p>
-            </div>
-            <div className="h-8 w-8 bg-stone-900 rounded-sm flex items-center justify-center text-green-500 font-bold text-xs">
+          <div className="flex items-center gap-3">
+            <div className="h-8 w-8 bg-stone-900 rounded-sm flex items-center justify-center text-green-500 font-bold text-xs shadow-sm">
               AD
             </div>
           </div>
@@ -155,7 +162,7 @@ export default function Layout({ setAuth }) {
 
       <nav 
         aria-label="Primary"
-        className="fixed bottom-0 w-full bg-white border-t border-stone-200 flex justify-around p-3 z-bottomnav md:hidden"
+        className="fixed bottom-0 w-full bg-white border-t border-stone-200 flex justify-around p-3 z-bottomnav md:hidden transition-colors"
         style={{ paddingBottom: 'max(env(safe-area-inset-bottom), 0.75rem)' }}
       >
         <NavLink to="/" end aria-current={location.pathname === '/' ? 'page' : undefined} className={({isActive}) => `flex flex-col items-center gap-1 min-h-[44px] min-w-[44px] justify-center transition-colors ${isActive ? 'text-green-600' : 'text-stone-400'}`}>
@@ -171,12 +178,16 @@ export default function Layout({ setAuth }) {
           <span className="text-[9px] font-bold uppercase tracking-widest">Orders</span>
         </NavLink>
         <NavLink to="/debt" aria-current={location.pathname === '/debt' ? 'page' : undefined} className={({isActive}) => `flex flex-col items-center gap-1 min-h-[44px] min-w-[44px] justify-center transition-colors ${isActive ? 'text-green-600' : 'text-stone-400'}`}>
-          <Users className="w-5 h-5" />
+          <DollarSign className="w-5 h-5" />
           <span className="text-[9px] font-bold uppercase tracking-widest">Accts</span>
         </NavLink>
-        <NavLink to="/whatsapp/config" aria-current={location.pathname === '/whatsapp/config' ? 'page' : undefined} className={({isActive}) => `flex flex-col items-center gap-1 min-h-[44px] min-w-[44px] justify-center transition-colors ${isActive ? 'text-green-600' : 'text-stone-400'}`}>
-          <Settings className="w-5 h-5" />
-          <span className="text-[9px] font-bold uppercase tracking-widest">Conf</span>
+        <NavLink to="/staff" aria-current={location.pathname === '/staff' ? 'page' : undefined} className={({isActive}) => `flex flex-col items-center gap-1 min-h-[44px] min-w-[44px] justify-center transition-colors ${isActive ? 'text-green-600' : 'text-stone-400'}`}>
+          <Users className="w-5 h-5" />
+          <span className="text-[9px] font-bold uppercase tracking-widest">Staff</span>
+        </NavLink>
+        <NavLink to="/quarterly-reports" aria-current={location.pathname === '/quarterly-reports' ? 'page' : undefined} className={({isActive}) => `flex flex-col items-center gap-1 min-h-[44px] min-w-[44px] justify-center transition-colors ${isActive ? 'text-green-600' : 'text-stone-400'}`}>
+          <Calendar className="w-5 h-5" />
+          <span className="text-[9px] font-bold uppercase tracking-widest">Qtrly</span>
         </NavLink>
       </nav>
     </div>

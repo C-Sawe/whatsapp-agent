@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { Settings, Save, CheckCircle, Activity, Send } from 'lucide-react';
-import axios from 'axios';
+import api from '../api';
 
 export default function ConfigPage() {
   const [config, setConfig] = useState({});
@@ -18,7 +18,7 @@ export default function ConfigPage() {
   const fetchConfig = async () => {
     try {
       const auth = localStorage.getItem('mosop_auth');
-      const res = await axios.get('/api/config', {
+      const res = await api.get('/api/config', {
         headers: { Authorization: auth }
       });
       setConfig(res.data);
@@ -35,7 +35,7 @@ export default function ConfigPage() {
   const fetchGroqStatus = async () => {
     try {
       const auth = localStorage.getItem('mosop_auth');
-      const res = await axios.get('/api/groq-status', {
+      const res = await api.get('/api/groq-status', {
         headers: { Authorization: auth }
       });
       if (res.data.status === 'success') {
@@ -66,7 +66,7 @@ export default function ConfigPage() {
     setSaving(key);
     try {
       const auth = localStorage.getItem('mosop_auth');
-      await axios.post('/api/config', 
+      await api.post('/api/config', 
         { key, value: config[key] },
         { headers: { Authorization: auth } }
       );
@@ -85,7 +85,7 @@ export default function ConfigPage() {
     setTestResponse('Processing request...');
     try {
       const auth = localStorage.getItem('mosop_auth');
-      const res = await axios.post('/api/test-ai', 
+      const res = await api.post('/api/test-ai', 
         { user_text: testInput },
         { headers: { Authorization: auth } }
       );

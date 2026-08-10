@@ -1,9 +1,9 @@
 import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
-import axios from 'axios';
-import { ArrowLeft, Search, RefreshCw, AlertCircle } from 'lucide-react';
-
-import { useWindowVirtualizer } from '@tanstack/react-virtual';
+import api from '../api';
+import { ArrowLeft, Search, RefreshCw, AlertCircle, Database, Download } from 'lucide-react';
+import ProductMovementModal from '../components/ProductMovementModal';
+import { downloadCsv } from '../utils/exportCsv';
 
 export default function Inventory() {
   const navigate = useNavigate();
@@ -24,14 +24,9 @@ export default function Inventory() {
   const [supplierId, setSupplierId] = useState('all');
   const [suppliers, setSuppliers] = useState([]);
   
-  const listRef = React.useRef(null);
-  
-  const virtualizer = useWindowVirtualizer({
-    count: inventoryData.length,
-    estimateSize: () => 130, // Estimated height of mobile card
-    scrollMargin: listRef.current?.offsetTop ?? 0,
-    overscan: 5,
-  });
+  const [selectedProduct, setSelectedProduct] = useState(null);
+  const [isModalOpen, setIsModalOpen] = useState(false);
+
 
   const storeNames = {
     1: 'Main',
@@ -43,15 +38,13 @@ export default function Inventory() {
     try {
       setLoading(true);
       setError('');
-      const token = localStorage.getItem('mosop_auth');
       const params = { page, page_size: pageSize };
       if (storeId !== 'all') params.store_id = storeId;
       if (categoryId !== 'all') params.category = categoryId;
       if (supplierId !== 'all') params.supplier = supplierId;
       if (debouncedSearchTerm) params.search = debouncedSearchTerm;
       
-      const res = await axios.get('/api/inventory', {
-        headers: { Authorization: token },
+      const res = await api.get('/api/inventory', {
         params
       });
       
@@ -90,6 +83,10 @@ export default function Inventory() {
     const interval = setInterval(fetchInventory, 30000);
     return () => clearInterval(interval);
   }, [page, pageSize, storeId, categoryId, supplierId, debouncedSearchTerm]);
+
+  const handleExport = () => {
+    downloadCsv(inventoryData, `inventory_export_${new Date().toISOString().split('T')[0]}.csv`);
+  };
 
   const getStatusBadge = (item) => {
     if (item.stock_quantity <= 0) {
@@ -131,7 +128,7 @@ export default function Inventory() {
       <main className="flex-1 p-4 md:p-8">
         <div className="max-w-7xl mx-auto flex flex-col lg:flex-row gap-6">
           
-          <aside className="w-full lg:w-64 shrink-0 space-y-6">
+          <aside className="w-full lg:w-64 shrink-0 space-y-6 lg:sticky lg:top-4 lg:self-start lg:max-h-[calc(100vh-2rem)] lg:overflow-y-auto hide-scrollbar">
             <div className="bg-white rounded-2xl border border-stone-200 shadow-sm p-4">
               <h3 className="text-sm font-black text-stone-900 uppercase tracking-widest mb-4">Categories</h3>
               <div className="flex flex-col gap-1 max-h-64 lg:max-h-none overflow-y-auto pr-2">
@@ -159,7 +156,7 @@ export default function Inventory() {
             <div className="flex flex-col xl:flex-row gap-4 justify-between items-start xl:items-center">
               <h2 className="text-2xl font-black text-stone-900 tracking-tight shrink-0">Stock Levels ({stats.totalItems})</h2>
               
-              <div className="flex flex-wrap gap-2 w-full xl:w-auto sticky top-[4rem] z-filters bg-stone-50/95 backdrop-blur py-2 -mx-4 px-4 md:mx-0 md:px-0 md:top-[4.5rem]">
+              <div className="flex flex-wrap gap-2 w-full xl:w-auto sticky top-0 z-filters bg-stone-50/95 backdrop-blur py-2 -mx-4 px-4 md:mx-0 md:px-0">
                 
                 <div className="flex gap-2 w-full sm:w-auto flex-1">
                   <select 
@@ -203,6 +200,14 @@ export default function Inventory() {
                   >
                     <RefreshCw className={`w-5 h-5 ${loading ? 'animate-spin text-green-500' : ''}`} />
                   </button>
+                  <button 
+                    onClick={handleExport} 
+                    disabled={loading || inventoryData.length === 0}
+                    className="px-3 py-2 bg-white border border-stone-200 rounded-xl text-stone-600 hover:bg-stone-50 hover:text-stone-900 transition-colors disabled:opacity-50 shrink-0 min-h-[44px] min-w-[44px] flex items-center justify-center active:scale-95"
+                    title="Export CSV"
+                  >
+                    <Download className="w-5 h-5" />
+                  </button>
                 </div>
                 
               </div>
@@ -232,7 +237,7 @@ export default function Inventory() {
                     <th className="p-4 font-semibold border-b border-stone-200 w-28">Price</th>
                     <th className="p-4 font-semibold border-b border-stone-200 w-32">Supplier</th>
                     <th className="p-4 font-semibold border-b border-stone-200 text-right w-20">Stock</th>
-                    <th className="p-4 font-semibold border-b border-stone-200 text-right w-24">Reorder</th>
+                    <th className="p-4 font-semibold border-b border-stone-200 text-right w-24">Runway</th>
                     <th className="p-4 font-semibold border-b border-stone-200 text-center w-28">Status</th>
                   </tr>
                 </thead>
@@ -262,7 +267,11 @@ export default function Inventory() {
                     </tr>
                   ) : (
                     inventoryData.map((item, idx) => (
-                      <tr key={`${item.sku}-${item.store_id || 0}-${idx}`} className="hover:bg-stone-50/50 transition-colors">
+                      <tr 
+                        key={`${item.sku}-${item.store_id || 0}-${idx}`} 
+                        className="hover:bg-stone-50/50 transition-colors cursor-pointer"
+                        onClick={() => { setSelectedProduct(item); setIsModalOpen(true); }}
+                      >
                         <td className="p-4 font-medium text-stone-900">{item.sku}</td>
                         <td className="p-4 text-stone-600 font-medium">{item.description}</td>
                         <td className="p-4">
@@ -279,7 +288,15 @@ export default function Inventory() {
                         <td className={`p-4 text-right font-bold ${item.stock_quantity <= 0 ? 'text-red-600' : 'text-stone-900'}`}>
                           {item.stock_quantity}
                         </td>
-                        <td className="p-4 text-right text-stone-400">{item.reorder_point}</td>
+                        <td className="p-4 text-right">
+                          {item.runway_days === 9999 ? (
+                            <span className="text-stone-400 font-medium">∞</span>
+                          ) : (
+                            <span className={`font-bold ${item.runway_days <= 7 && item.runway_days > 0 ? 'text-orange-600' : item.runway_days === 0 ? 'text-red-600' : 'text-green-600'}`}>
+                              {item.runway_days}d
+                            </span>
+                          )}
+                        </td>
                         <td className="p-4 text-center">{getStatusBadge(item)}</td>
                       </tr>
                     ))
@@ -313,41 +330,44 @@ export default function Inventory() {
                   <p className="text-sm">{searchTerm ? 'Try adjusting your search or filters.' : 'Awaiting sync.'}</p>
                 </div>
               ) : (
-                <div ref={listRef} className="p-2 relative" style={{ height: `${virtualizer.getTotalSize()}px` }}>
-                  {virtualizer.getVirtualItems().map((virtualItem) => {
-                    const item = inventoryData[virtualItem.index];
-                    return (
-                      <div 
-                        key={virtualItem.key}
-                        ref={virtualizer.measureElement}
-                        data-index={virtualItem.index}
-                        className="absolute top-0 left-2 right-2 pb-2"
-                        style={{
-                          transform: `translateY(${virtualItem.start}px)`,
-                        }}
-                      >
-                        <div className="bg-white p-4 rounded-xl border border-stone-100 shadow-sm h-full">
-                          <div className="flex justify-between items-start mb-1">
-                            <span className="text-xs font-bold text-stone-500 tracking-wider uppercase">{item.sku}</span>
-                            {getStatusBadge(item)}
-                          </div>
-                          <h4 className="font-bold text-stone-900 text-sm mb-3">{item.description}</h4>
-                          <div className="flex justify-between items-end">
-                            <div>
-                              <p className="text-[10px] text-stone-400 font-bold uppercase tracking-widest mb-0.5">Price</p>
-                              <p className="font-black text-stone-900 text-sm">KSh {item.retail_price?.toLocaleString() || '0'}</p>
-                            </div>
-                            <div className="text-right">
-                              <p className="text-[10px] text-stone-400 font-bold uppercase tracking-widest mb-0.5">Stock</p>
-                              <p className={`font-black text-lg leading-none ${item.stock_quantity <= 0 ? 'text-red-600' : 'text-stone-900'}`}>
-                                {item.stock_quantity}
-                              </p>
-                            </div>
-                          </div>
+                <div className="p-2 space-y-3">
+                  {inventoryData.map((item, idx) => (
+                    <div 
+                      key={`${item.sku}-${item.store_id || 0}-${idx}`}
+                      className="bg-white p-4 rounded-xl border border-stone-100 shadow-sm cursor-pointer hover:border-stone-300 transition-colors"
+                      onClick={() => { setSelectedProduct(item); setIsModalOpen(true); }}
+                    >
+                      <div className="flex justify-between items-start mb-1">
+                        <span className="text-xs font-bold text-stone-500 tracking-wider uppercase">{item.sku}</span>
+                        {getStatusBadge(item)}
+                      </div>
+                      <h4 className="font-bold text-stone-900 text-sm mb-3">{item.description}</h4>
+                      <div className="flex justify-between items-end">
+                        <div>
+                          <p className="text-[10px] text-stone-400 font-bold uppercase tracking-widest mb-0.5">Price</p>
+                          <p className="font-black text-stone-900 text-sm">KSh {item.retail_price?.toLocaleString() || '0'}</p>
+                        </div>
+                        <div className="text-center">
+                          <p className="text-[10px] text-stone-400 font-bold uppercase tracking-widest mb-0.5">Runway</p>
+                          <p className="font-black text-lg leading-none">
+                            {item.runway_days === 9999 ? (
+                              <span className="text-stone-300">∞</span>
+                            ) : (
+                              <span className={`${item.runway_days <= 7 && item.runway_days > 0 ? 'text-orange-600' : item.runway_days === 0 ? 'text-red-600' : 'text-green-600'}`}>
+                                {item.runway_days}d
+                              </span>
+                            )}
+                          </p>
+                        </div>
+                        <div className="text-right">
+                          <p className="text-[10px] text-stone-400 font-bold uppercase tracking-widest mb-0.5">Stock</p>
+                          <p className={`font-black text-lg leading-none ${item.stock_quantity <= 0 ? 'text-red-600' : 'text-stone-900'}`}>
+                            {item.stock_quantity}
+                          </p>
                         </div>
                       </div>
-                    );
-                  })}
+                    </div>
+                  ))}
                 </div>
               )}
             </div>
@@ -379,6 +399,13 @@ export default function Inventory() {
           
         </div>
       </main>
+
+      <ProductMovementModal 
+        isOpen={isModalOpen}
+        onClose={() => setIsModalOpen(false)}
+        product={selectedProduct}
+        storeId={storeId}
+      />
     </div>
   );
 }

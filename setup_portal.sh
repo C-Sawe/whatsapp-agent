@@ -41,6 +41,6 @@ EOF
 # 5. Start and Enable
 sudo systemctl daemon-reload
 sudo systemctl enable mosop-portal.service
-sudo systemctl start mosop-portal.service
+sudo systemctl restart mosop-portal.service
 
 echo "Unified portal deployed successfully!"

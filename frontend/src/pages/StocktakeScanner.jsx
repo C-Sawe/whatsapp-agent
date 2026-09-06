@@ -15,6 +15,7 @@ const formatKES = (amount) => {
 
 const MobileScanner = ({ sessionId = 1, setAuth }) => {
   // Session & User state
+  const [isAssigned, setIsAssigned] = useState(false);
   const [hasActiveSession, setHasActiveSession] = useState(false);
   const [sessionName, setSessionName] = useState('');
   const [currentSessionId, setCurrentSessionId] = useState(sessionId);
@@ -68,14 +69,31 @@ const MobileScanner = ({ sessionId = 1, setAuth }) => {
           setCurrentSessionId(statusRes.data.session_id);
         }
         setSessionName(statusRes.data.name || `Session #${statusRes.data.session_id}`);
+        
+        const userAssigned = Boolean(statusRes.data.is_assigned);
+        setIsAssigned(userAssigned);
+        
+        if (statusRes.data.participant_status === 'COMMITTED') {
+          setIsCommitted(true);
+        }
+
+        if (userAssigned) {
+          // Assigned to active stocktake: Price & Stock lookup is strictly FORBIDDEN
+          setActiveTab(prev => (prev === 'counts' ? 'counts' : 'scan'));
+        } else {
+          // Unassigned user / regular salesperson: Price & Stock lookup mode
+          setActiveTab('lookup');
+        }
       } else {
         setHasActiveSession(false);
+        setIsAssigned(false);
         setSessionName('');
         setActiveTab('lookup');
       }
     } catch (err) {
       console.error('Session status check error:', err);
       setHasActiveSession(false);
+      setIsAssigned(false);
       setActiveTab('lookup');
     }
   };
@@ -104,7 +122,7 @@ const MobileScanner = ({ sessionId = 1, setAuth }) => {
   // LOOKUP MODE: Search Main Store Price & Actual Stock
   // -------------------------------------------------------------------------
   useEffect(() => {
-    if (activeTab !== 'lookup') return;
+    if (isAssigned || activeTab !== 'lookup') return;
     const trimmed = lookupQuery.trim();
 
     const delay = setTimeout(async () => {
@@ -390,11 +408,11 @@ const MobileScanner = ({ sessionId = 1, setAuth }) => {
           <div className="flex items-center gap-2 flex-wrap">
             <h1 className="font-black text-sm sm:text-base tracking-tight flex items-center gap-1.5 sm:gap-2 text-stone-900">
               <Smartphone className="w-4 h-4 sm:w-5 sm:h-5 text-green-700 shrink-0" />
-              <span>{activeTab === 'lookup' ? 'Mosop Price & Stock' : 'Mosop Stocktake'}</span>
+              <span>{!isAssigned ? 'Mosop Price & Stock' : 'Mosop Stocktake'}</span>
             </h1>
 
             {/* Badge */}
-            {activeTab === 'lookup' ? (
+            {!isAssigned ? (
               <span className="text-[11px] font-black uppercase tracking-wider bg-green-50 text-green-800 px-2 py-0.5 rounded-sm border border-green-200 inline-flex items-center gap-1">
                 <Tag className="w-3 h-3 text-green-700" />
                 Main Store
@@ -408,7 +426,7 @@ const MobileScanner = ({ sessionId = 1, setAuth }) => {
           </div>
 
           <p className="text-xs text-stone-500 font-medium truncate max-w-[200px] sm:max-w-md mt-0.5">
-            {activeTab === 'lookup' 
+            {!isAssigned 
               ? 'Live Main Store Inventory & Prices' 
               : (sessionName || 'Active Stocktake Session')}
           </p>
@@ -432,7 +450,7 @@ const MobileScanner = ({ sessionId = 1, setAuth }) => {
       {/* ========================================================================= */}
       {/* Main Responsive Body Container */}
       {/* ========================================================================= */}
-      <main className={`flex-1 w-full max-w-7xl mx-auto p-3 sm:p-5 md:p-6 flex flex-col ${hasActiveSession ? 'pb-24 sm:pb-28' : 'pb-6'}`}>
+      <main className={`flex-1 w-full max-w-7xl mx-auto p-3 sm:p-5 md:p-6 flex flex-col ${hasActiveSession && isAssigned && !isCommitted ? 'pb-24 sm:pb-28' : 'pb-6'}`}>
         
         {/* Floating Success Notification */}
         {successMsg && (
@@ -444,9 +462,9 @@ const MobileScanner = ({ sessionId = 1, setAuth }) => {
 
         {/* ======================================================================= */}
         {/* MODE 1: PRICE & ACTUAL STOCK LOOKUP (MAIN STORE) */}
-        {/* Responsive: Single column on phones/tablets, Dual-pane on desktop */}
+        {/* Strictly hidden for users assigned to an ongoing stocktake session */}
         {/* ======================================================================= */}
-        {activeTab === 'lookup' && (
+        {!isAssigned && activeTab === 'lookup' && (
           <div className="flex-1 flex flex-col animate-in fade-in duration-150">
             
             <div className="grid grid-cols-1 lg:grid-cols-12 gap-5 items-start flex-1">
@@ -659,7 +677,7 @@ const MobileScanner = ({ sessionId = 1, setAuth }) => {
         {/* MODE 2: STOCKTAKE COUNT (UNBIASED PHYSICAL COUNTING) */}
         {/* Prices and system stock levels are completely hidden */}
         {/* ======================================================================= */}
-        {activeTab === 'scan' && (
+        {isAssigned && activeTab === 'scan' && (
           <div className="flex-1 flex flex-col">
             
             {isCommitted ? (
@@ -922,7 +940,7 @@ const MobileScanner = ({ sessionId = 1, setAuth }) => {
         {/* ======================================================================= */}
         {/* MODE 3: MY RECORDED COUNTS */}
         {/* ======================================================================= */}
-        {activeTab === 'counts' && (
+        {isAssigned && activeTab === 'counts' && (
           <div className="flex flex-col h-full flex-1 animate-in fade-in duration-150">
             
             <div className="mb-4 flex flex-col sm:flex-row sm:items-center justify-between gap-2.5 shrink-0">
@@ -1013,26 +1031,12 @@ const MobileScanner = ({ sessionId = 1, setAuth }) => {
       {/* Bottom Navigation: ONLY shown when an active stocktake session exists */}
       {/* Allows switching between Price & Stock, Scan to Count, and My Counts */}
       {/* ========================================================================= */}
-      {hasActiveSession && !isCommitted && (
+      {/* Bottom Navigation: ONLY shown when user IS ASSIGNED to an active stocktake session */}
+      {/* Allows switching between Scan to Count and My Counts (Price & Stock is strictly hidden) */}
+      {hasActiveSession && isAssigned && !isCommitted && (
         <nav className="fixed bottom-0 left-0 right-0 bg-white border-t border-stone-200 flex shadow-lg z-50 h-16">
           
-          {/* Tab 1: Price & Stock */}
-          <button 
-            onClick={() => {
-              setActiveTab('lookup');
-              setSelectedLookupItem(null);
-            }}
-            className={`flex-1 flex flex-col items-center justify-center gap-1 transition-colors ${
-              activeTab === 'lookup' 
-                ? 'text-green-800 font-black bg-green-50/40 border-t-2 border-green-700' 
-                : 'text-stone-500 hover:text-stone-800'
-            }`}
-          >
-            <Tag className="w-5 h-5" />
-            <span className="text-[11px] sm:text-xs font-bold">Price & Stock</span>
-          </button>
-
-          {/* Tab 2: Scan to Count */}
+          {/* Tab 1: Scan to Count */}
           <button 
             onClick={() => {
               setActiveTab('scan');
@@ -1048,7 +1052,7 @@ const MobileScanner = ({ sessionId = 1, setAuth }) => {
             <span className="text-[11px] sm:text-xs font-bold">Scan to Count</span>
           </button>
           
-          {/* Tab 3: My Counts */}
+          {/* Tab 2: My Counts */}
           <button 
             onClick={() => setActiveTab('counts')}
             className={`flex-1 flex flex-col items-center justify-center gap-1 transition-colors ${

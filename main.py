@@ -1472,8 +1472,22 @@ def search_items(
 
         prefix_term = f"{clean_q}%" if clean_q else "%"
 
-        if for_count:
+        # Check if requesting user is assigned to an open stocktake session
+        user_id = token_data.get("user_id")
+        user_is_assigned = False
+        if user_id:
+            cur.execute("""
+                SELECT 1 FROM session_participants sp
+                JOIN inventory_sessions s ON sp.session_id = s.session_id
+                WHERE s.status = 'OPEN' AND sp.user_id = %s
+            """, (user_id,))
+            if cur.fetchone():
+                user_is_assigned = True
+
+        if for_count or user_is_assigned:
             # Unbiased physical stocktake count mode:
+            # If the user has been assigned to an open session, they are STRICTLY forbidden
+            # from viewing price and stock levels.
             # Expected stock quantities and prices are completely masked
             cur.execute("SELECT session_id, store_id FROM inventory_sessions WHERE status = 'OPEN' ORDER BY created_at DESC LIMIT 1")
             open_session = cur.fetchone()
@@ -2191,22 +2205,40 @@ def get_session_status(token_data: dict = Depends(verify_credentials)):
     conn = db_pool.getconn()
     try:
         cur = conn.cursor()
-        if token_data.get("role") in ["ADMIN", "MANAGER"]:
-            cur.execute("SELECT session_id, name, description, store_id, COALESCE(allow_live_sales, FALSE) FROM inventory_sessions WHERE status = 'OPEN' ORDER BY created_at DESC LIMIT 1")
-        else:
+        user_id = token_data.get("user_id")
+        is_assigned = False
+        session_row = None
+
+        # 1. Check if user is an assigned participant to any OPEN stocktake session
+        if user_id:
             cur.execute("""
-                SELECT s.session_id, s.name, s.description, s.store_id, COALESCE(s.allow_live_sales, FALSE) 
+                SELECT s.session_id, s.name, s.description, s.store_id, COALESCE(s.allow_live_sales, FALSE), sp.status
                 FROM inventory_sessions s
                 JOIN session_participants sp ON s.session_id = sp.session_id
                 WHERE s.status = 'OPEN' AND sp.user_id = %s
                 ORDER BY s.created_at DESC LIMIT 1
-            """, (token_data.get("user_id"),))
-        
-        session_row = cur.fetchone()
+            """, (user_id,))
+            session_row = cur.fetchone()
+            if session_row:
+                is_assigned = True
+
+        # 2. If not specifically assigned as a participant, but user is ADMIN or MANAGER,
+        # fetch the open session for management oversight
+        if not session_row and token_data.get("role") in ["ADMIN", "MANAGER"]:
+            cur.execute("""
+                SELECT session_id, name, description, store_id, COALESCE(allow_live_sales, FALSE), 'MANAGER'
+                FROM inventory_sessions
+                WHERE status = 'OPEN'
+                ORDER BY created_at DESC LIMIT 1
+            """)
+            session_row = cur.fetchone()
+
         if not session_row:
-            return {"active": False, "participants": []}
+            return {"active": False, "is_assigned": False, "participants": []}
             
-        session_id, name, description, store_id, allow_live_sales = session_row[0], session_row[1], session_row[2], session_row[3], session_row[4]
+        session_id, name, description, store_id, allow_live_sales, participant_status = (
+            session_row[0], session_row[1], session_row[2], session_row[3], session_row[4], session_row[5]
+        )
         cur.execute("""
             SELECT u.username, sp.status, sp.updated_at
             FROM session_participants sp
@@ -2217,6 +2249,8 @@ def get_session_status(token_data: dict = Depends(verify_credentials)):
         participants = [{"username": r[0], "status": r[1], "updated_at": r[2].isoformat() if r[2] else None} for r in rows]
         return {
             "active": True, 
+            "is_assigned": is_assigned,
+            "participant_status": participant_status,
             "session_id": session_id, 
             "name": name, 
             "description": description, 

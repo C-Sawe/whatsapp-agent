@@ -20,9 +20,7 @@ const MobileScanner = ({ sessionId = 1, setAuth }) => {
   const [currentSessionId, setCurrentSessionId] = useState(sessionId);
   const [username, setUsername] = useState('Staff');
 
-  // Navigation:
-  // When stocktake session is active: 'scan' (Count) or 'counts' (My Counts). Price & Stock is hidden.
-  // When no stocktake session: 'lookup' (Price & Stock Checker for Main Store).
+  // Navigation: 'lookup' (Price & Actual Stock), 'scan' (Stocktake Count), 'counts' (My Counts)
   const [activeTab, setActiveTab] = useState('lookup');
 
   // Notifications & Global Loading
@@ -70,12 +68,9 @@ const MobileScanner = ({ sessionId = 1, setAuth }) => {
           setCurrentSessionId(statusRes.data.session_id);
         }
         setSessionName(statusRes.data.name || `Session #${statusRes.data.session_id}`);
-        // When stocktake session is active, force counting mode to ensure unbiased stocktake
-        setActiveTab('scan');
       } else {
         setHasActiveSession(false);
         setSessionName('');
-        // No active session: enable price and actual stock lookup
         setActiveTab('lookup');
       }
     } catch (err) {
@@ -109,13 +104,15 @@ const MobileScanner = ({ sessionId = 1, setAuth }) => {
   // LOOKUP MODE: Search Main Store Price & Actual Stock
   // -------------------------------------------------------------------------
   useEffect(() => {
-    if (hasActiveSession || activeTab !== 'lookup') return;
+    if (activeTab !== 'lookup') return;
     const trimmed = lookupQuery.trim();
 
     const delay = setTimeout(async () => {
       setLookupLoading(true);
       try {
-        const res = await api.get('/api/items/search', { params: { q: trimmed } });
+        const res = await api.get('/api/items/search', { 
+          params: { q: trimmed, for_count: false } 
+        });
         setLookupResults(res.data || []);
       } catch (err) {
         console.error('Lookup search failed:', err);
@@ -125,14 +122,14 @@ const MobileScanner = ({ sessionId = 1, setAuth }) => {
     }, 200);
 
     return () => clearTimeout(delay);
-  }, [lookupQuery, activeTab, hasActiveSession]);
+  }, [lookupQuery, activeTab]);
 
   // Auto-focus lookup input
   useEffect(() => {
-    if (!hasActiveSession && activeTab === 'lookup' && !selectedLookupItem && lookupInputRef.current) {
+    if (activeTab === 'lookup' && !selectedLookupItem && lookupInputRef.current) {
       lookupInputRef.current.focus();
     }
-  }, [activeTab, selectedLookupItem, hasActiveSession]);
+  }, [activeTab, selectedLookupItem]);
 
   // Hardware barcode scanner support in Lookup Mode
   const handleLookupKeyDown = async (e) => {
@@ -154,7 +151,9 @@ const MobileScanner = ({ sessionId = 1, setAuth }) => {
 
       setLookupLoading(true);
       try {
-        const res = await api.get('/api/items/search', { params: { q: trimmed } });
+        const res = await api.get('/api/items/search', { 
+          params: { q: trimmed, for_count: false } 
+        });
         if (res.data && res.data.length > 0) {
           const exact = res.data.find(r => 
             r.item_lookup_code?.toLowerCase() === trimmed.toLowerCase() || 
@@ -171,10 +170,10 @@ const MobileScanner = ({ sessionId = 1, setAuth }) => {
   };
 
   // -------------------------------------------------------------------------
-  // STOCKTAKE COUNT MODE: Unbiased Barcode & Item Search
+  // STOCKTAKE COUNT MODE: Unbiased Physical Counting
   // -------------------------------------------------------------------------
   useEffect(() => {
-    if (!hasActiveSession || activeTab !== 'scan') return;
+    if (activeTab !== 'scan') return;
     const trimmed = query.trim();
     if (trimmed.length < 2) {
       setResults([]);
@@ -182,20 +181,22 @@ const MobileScanner = ({ sessionId = 1, setAuth }) => {
     }
     const delay = setTimeout(async () => {
       try {
-        const res = await api.get(`/api/items/search?q=${encodeURIComponent(trimmed)}`);
+        const res = await api.get('/api/items/search', { 
+          params: { q: trimmed, for_count: true } 
+        });
         setResults(res.data || []);
       } catch (err) {
         console.error('Count search failed:', err);
       }
     }, 200);
     return () => clearTimeout(delay);
-  }, [query, activeTab, hasActiveSession]);
+  }, [query, activeTab]);
 
   useEffect(() => {
-    if (hasActiveSession && activeTab === 'scan' && !selectedItem && searchInputRef.current) {
+    if (activeTab === 'scan' && !selectedItem && searchInputRef.current) {
       searchInputRef.current.focus();
     }
-  }, [activeTab, selectedItem, hasActiveSession]);
+  }, [activeTab, selectedItem]);
 
   const handleSelectCountItem = (item) => {
     setSelectedItem(item);
@@ -207,7 +208,7 @@ const MobileScanner = ({ sessionId = 1, setAuth }) => {
 
   // Hardware scanner or keyboard listener in Count Mode
   useEffect(() => {
-    if (!hasActiveSession || !selectedItem || activeTab !== 'scan') return;
+    if (!selectedItem || activeTab !== 'scan') return;
     const handleKeyDown = (e) => {
       if (['0','1','2','3','4','5','6','7','8','9','.'].includes(e.key)) {
         e.preventDefault();
@@ -226,7 +227,7 @@ const MobileScanner = ({ sessionId = 1, setAuth }) => {
     };
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [selectedItem, quantityStr, loading, condition, activeTab, hasActiveSession]);
+  }, [selectedItem, quantityStr, loading, condition, activeTab]);
 
   const handleSearchKeyDown = async (e) => {
     if (e.key === 'Enter') {
@@ -245,7 +246,9 @@ const MobileScanner = ({ sessionId = 1, setAuth }) => {
 
       try {
         setLoading(true);
-        const res = await api.get(`/api/items/search?q=${encodeURIComponent(trimmed)}`);
+        const res = await api.get('/api/items/search', { 
+          params: { q: trimmed, for_count: true } 
+        });
         if (res.data && res.data.length > 0) {
           const exact = res.data.find(r => 
             r.item_lookup_code?.toLowerCase() === trimmed.toLowerCase() || 
@@ -387,11 +390,11 @@ const MobileScanner = ({ sessionId = 1, setAuth }) => {
           <div className="flex items-center gap-2 flex-wrap">
             <h1 className="font-black text-sm sm:text-base tracking-tight flex items-center gap-1.5 sm:gap-2 text-stone-900">
               <Smartphone className="w-4 h-4 sm:w-5 sm:h-5 text-green-700 shrink-0" />
-              <span>{hasActiveSession ? 'Mosop Stocktake' : 'Mosop Price & Stock'}</span>
+              <span>{activeTab === 'lookup' ? 'Mosop Price & Stock' : 'Mosop Stocktake'}</span>
             </h1>
 
             {/* Badge */}
-            {!hasActiveSession ? (
+            {activeTab === 'lookup' ? (
               <span className="text-[11px] font-black uppercase tracking-wider bg-green-50 text-green-800 px-2 py-0.5 rounded-sm border border-green-200 inline-flex items-center gap-1">
                 <Tag className="w-3 h-3 text-green-700" />
                 Main Store
@@ -399,13 +402,15 @@ const MobileScanner = ({ sessionId = 1, setAuth }) => {
             ) : (
               <span className="text-[11px] font-black uppercase tracking-wider bg-stone-100 text-stone-700 px-2 py-0.5 rounded-sm border border-stone-200 inline-flex items-center gap-1">
                 <Barcode className="w-3 h-3 text-stone-600" />
-                Active Session
+                Stocktake Count
               </span>
             )}
           </div>
 
           <p className="text-xs text-stone-500 font-medium truncate max-w-[200px] sm:max-w-md mt-0.5">
-            {hasActiveSession ? (sessionName || 'Active Session') : 'Live Main Store Inventory & Prices'}
+            {activeTab === 'lookup' 
+              ? 'Live Main Store Inventory & Prices' 
+              : (sessionName || 'Active Stocktake Session')}
           </p>
         </div>
         
@@ -425,11 +430,11 @@ const MobileScanner = ({ sessionId = 1, setAuth }) => {
       </header>
 
       {/* ========================================================================= */}
-      {/* Main Container */}
+      {/* Main Responsive Body Container */}
       {/* ========================================================================= */}
-      <main className="flex-1 w-full max-w-7xl mx-auto p-3 sm:p-5 md:p-6 flex flex-col pb-24 sm:pb-28">
+      <main className={`flex-1 w-full max-w-7xl mx-auto p-3 sm:p-5 md:p-6 flex flex-col ${hasActiveSession ? 'pb-24 sm:pb-28' : 'pb-6'}`}>
         
-        {/* Floating Notification */}
+        {/* Floating Success Notification */}
         {successMsg && (
           <div className="bg-green-700 text-white text-sm sm:text-base font-black px-4 py-3 rounded-sm mb-4 shadow-md flex items-center gap-2.5 animate-in fade-in slide-in-from-top-2 shrink-0 border border-green-800">
             <CheckCircle className="w-5 h-5 shrink-0" />
@@ -438,13 +443,12 @@ const MobileScanner = ({ sessionId = 1, setAuth }) => {
         )}
 
         {/* ======================================================================= */}
-        {/* CASE A: NO STOCKTAKE IN PROGRESS -> PRICE & ACTUAL STOCK CHECKER */}
-        {/* Responsive: Single column on phones/tablets, Dual-pane on desktops */}
+        {/* MODE 1: PRICE & ACTUAL STOCK LOOKUP (MAIN STORE) */}
+        {/* Responsive: Single column on phones/tablets, Dual-pane on desktop */}
         {/* ======================================================================= */}
-        {!hasActiveSession && (
+        {activeTab === 'lookup' && (
           <div className="flex-1 flex flex-col animate-in fade-in duration-150">
             
-            {/* Desktop 2-Column Split View (lg:) / Mobile-Tablet Single Pane */}
             <div className="grid grid-cols-1 lg:grid-cols-12 gap-5 items-start flex-1">
               
               {/* LEFT COLUMN: Search & Results List */}
@@ -547,7 +551,7 @@ const MobileScanner = ({ sessionId = 1, setAuth }) => {
 
               </div>
 
-              {/* RIGHT COLUMN: Focused Product Detail (Desktop Sticky / Mobile Modal) */}
+              {/* RIGHT COLUMN: Focused Product Detail (Desktop Sticky / Mobile-Tablet focused view) */}
               <div className="lg:col-span-6 xl:col-span-5">
                 {selectedLookupItem ? (
                   <div className="bg-white border border-stone-200 rounded-sm p-5 sm:p-6 shadow-xs flex flex-col gap-4 sticky top-20 animate-in fade-in zoom-in-95 duration-150">
@@ -560,12 +564,12 @@ const MobileScanner = ({ sessionId = 1, setAuth }) => {
                             {selectedLookupItem.item_lookup_code || selectedLookupItem.sku}
                           </span>
                           {selectedLookupItem.category && (
-                            <span className="text-xs uppercase font-black px-2 py-0.5 bg-blue-50 text-blue-700 rounded-sm border border-blue-200">
+                            <span className="text-xs uppercase font-black px-2.5 py-0.5 bg-blue-50 text-blue-700 rounded-sm border border-blue-200">
                               {selectedLookupItem.category}
                             </span>
                           )}
                           {selectedLookupItem.supplier && selectedLookupItem.supplier !== 'Unknown' && (
-                            <span className="text-xs font-bold px-2 py-0.5 bg-amber-50 text-amber-800 rounded-sm border border-amber-200">
+                            <span className="text-xs font-bold px-2.5 py-0.5 bg-amber-50 text-amber-800 rounded-sm border border-amber-200">
                               {selectedLookupItem.supplier}
                             </span>
                           )}
@@ -652,13 +656,12 @@ const MobileScanner = ({ sessionId = 1, setAuth }) => {
         )}
 
         {/* ======================================================================= */}
-        {/* CASE B: ACTIVE STOCKTAKE SESSION -> UNBIASED COUNTING */}
-        {/* Staff CANNOT view prices or stock levels */}
+        {/* MODE 2: STOCKTAKE COUNT (UNBIASED PHYSICAL COUNTING) */}
+        {/* Prices and system stock levels are completely hidden */}
         {/* ======================================================================= */}
-        {hasActiveSession && (
+        {activeTab === 'scan' && (
           <div className="flex-1 flex flex-col">
             
-            {/* Committed Screen */}
             {isCommitted ? (
               <div className="flex-1 flex flex-col items-center justify-center bg-white rounded-sm p-8 sm:p-12 text-center shadow-sm border border-stone-200 my-auto animate-in fade-in duration-150">
                 <div className="w-16 h-16 bg-green-50 text-green-700 rounded-sm border border-green-200 flex items-center justify-center mb-5">
@@ -675,329 +678,331 @@ const MobileScanner = ({ sessionId = 1, setAuth }) => {
                   Return to Review My Counts
                 </button>
               </div>
-            ) : activeTab === 'scan' ? (
-              !selectedItem ? (
-                // SEARCH / SCAN BARCODE TO COUNT
-                <div className="flex flex-col h-full flex-1 animate-in fade-in duration-150">
-                  
-                  <div className="relative mb-3 shrink-0">
-                    <Search className="w-5 h-5 sm:w-6 sm:h-6 absolute left-3.5 sm:left-4 top-3.5 sm:top-4 text-stone-400" />
-                    <input 
-                      ref={searchInputRef}
-                      type="text" 
-                      placeholder="Scan barcode or type item name..." 
-                      value={query}
-                      onChange={(e) => setQuery(e.target.value)}
-                      onKeyDown={handleSearchKeyDown}
-                      className="w-full bg-white border-2 border-stone-300 text-base sm:text-lg p-3.5 sm:p-4 pl-11 sm:pl-12 pr-11 sm:pr-12 rounded-sm focus:outline-none focus:border-stone-900 transition-colors shadow-2xs font-sans"
-                    />
-                    {query && (
-                      <button 
-                        onClick={() => setQuery('')} 
-                        className="absolute right-3.5 sm:right-4 top-3.5 sm:top-4 text-stone-400 hover:text-stone-700 p-1"
-                        title="Clear search"
-                      >
-                        <X className="w-5 h-5 sm:w-6 sm:h-6" />
-                      </button>
-                    )}
-                  </div>
-
-                  {/* Results List */}
-                  <div className="flex-1 overflow-y-auto bg-white rounded-sm shadow-xs border border-stone-200 divide-y divide-stone-100">
-                    {results.length === 0 && query.trim().length >= 2 ? (
-                      <div className="p-10 text-center text-stone-400">
-                        <p className="font-bold text-base text-stone-600">No items found</p>
-                        <p className="text-xs mt-1">Check barcode number or product name.</p>
-                      </div>
-                    ) : results.length === 0 ? (
-                      <div className="p-12 text-center text-stone-400">
-                        <Barcode className="w-12 h-12 mx-auto mb-3 opacity-30 text-stone-400" />
-                        <p className="font-black text-stone-700 text-base">Scan Barcode to Count</p>
-                        <p className="text-xs sm:text-sm mt-1 text-stone-400 max-w-xs mx-auto">
-                          Point the scanner or enter the item code to log counted shelf quantities.
-                        </p>
-                      </div>
-                    ) : (
-                      results.map((item) => (
-                        <div
-                          key={item.item_lookup_code || item.sku}
-                          onClick={() => handleSelectCountItem(item)}
-                          className="p-4 hover:bg-stone-50 active:bg-stone-100 cursor-pointer transition-colors border-b border-stone-100 last:border-0"
-                        >
-                          <div className="flex items-start justify-between gap-3">
-                            <p className="font-black text-stone-900 text-sm sm:text-base leading-snug line-clamp-2">
-                              {item.description}
-                            </p>
-                            <div className="flex items-center gap-1.5 flex-wrap shrink-0">
-                              {item.category && (
-                                <span className="text-xs uppercase font-bold tracking-wider px-2 py-0.5 rounded-sm bg-stone-100 text-stone-700 border border-stone-200">
-                                  {item.category}
-                                </span>
-                              )}
-                              {item.supplier && item.supplier !== 'Unknown' && (
-                                <span className="text-xs uppercase font-bold tracking-wider px-2 py-0.5 rounded-sm bg-amber-50 text-amber-800 border border-amber-200 truncate max-w-[140px] sm:max-w-[180px]">
-                                  {item.supplier}
-                                </span>
-                              )}
-                            </div>
-                          </div>
-                          
-                          <div className="flex items-center justify-between text-xs sm:text-sm text-stone-500 mt-2.5 font-mono">
-                            <span className="bg-stone-100 px-2.5 py-1 rounded-sm text-stone-800 font-bold border border-stone-200">
-                              {item.item_lookup_code || item.sku}
-                            </span>
-                            <span className="text-xs text-stone-400">Tap to Count</span>
-                          </div>
-                        </div>
-                      ))
-                    )}
-                  </div>
-                </div>
-              ) : (
-                // PHYSICAL COUNTING KEYPAD
-                <div className="flex flex-col flex-1 animate-in slide-in-from-right-3">
-                  <div className="grid grid-cols-1 md:grid-cols-12 gap-3.5 sm:gap-5 md:gap-6 items-start">
-                    
-                    {/* Left Column: Product Details & Condition */}
-                    <div className="md:col-span-5 flex flex-col gap-3.5">
-                      <div className="bg-white p-4 sm:p-5 rounded-sm shadow-xs border border-stone-200 relative">
-                        <button 
-                          onClick={() => setSelectedItem(null)}
-                          className="absolute top-3.5 right-3.5 p-2 bg-stone-100 hover:bg-stone-200 active:scale-90 rounded-sm text-stone-600 transition-all border border-stone-200"
-                          title="Cancel"
-                        >
-                          <X className="w-5 h-5" />
-                        </button>
-                        
-                        <div className="flex items-center gap-2 mb-2 flex-wrap pr-10">
-                          {selectedItem.category && (
-                            <span className="text-xs uppercase font-black px-2.5 py-1 bg-blue-50 text-blue-700 rounded-sm border border-blue-200">
-                              {selectedItem.category}
-                            </span>
-                          )}
-                          {selectedItem.supplier && selectedItem.supplier !== 'Unknown' && (
-                            <span className="text-xs uppercase font-bold px-2.5 py-1 bg-amber-50 text-amber-800 rounded-sm border border-amber-200">
-                              {selectedItem.supplier}
-                            </span>
-                          )}
-                        </div>
-
-                        <h2 className="text-base sm:text-xl font-black text-stone-900 pr-4 leading-tight mb-2.5">
-                          {selectedItem.description}
-                        </h2>
-                        
-                        <div className="flex items-center justify-between text-xs sm:text-sm font-mono text-stone-600 pt-2 border-t border-stone-100">
-                          <span className="bg-stone-100 px-2.5 py-1 rounded-sm font-bold border border-stone-200 text-stone-800">
-                            {selectedItem.item_lookup_code || selectedItem.sku}
-                          </span>
-                        </div>
-                      </div>
-
-                      {/* Condition Selector */}
-                      <div className="bg-white p-3.5 sm:p-4 rounded-sm shadow-xs border border-stone-200">
-                        <span className="text-xs font-black uppercase tracking-wider text-stone-400 block mb-2.5">
-                          Item Condition
-                        </span>
-                        <div className="grid grid-cols-3 gap-2">
-                          <button
-                            type="button"
-                            onClick={() => setCondition('GOOD')}
-                            className={`py-3 sm:py-3.5 px-2 text-xs sm:text-sm font-black uppercase rounded-sm transition-all flex items-center justify-center gap-1.5 border active:scale-95 ${
-                              condition === 'GOOD'
-                                ? 'bg-green-700 text-white border-green-800 shadow-xs ring-2 ring-green-600/30'
-                                : 'bg-white text-stone-700 border-stone-200 hover:bg-stone-50'
-                            }`}
-                          >
-                            <ShieldCheck className="w-4 h-4 sm:w-5 sm:h-5 shrink-0" />
-                            <span className="truncate">Good</span>
-                          </button>
-                          
-                          <button
-                            type="button"
-                            onClick={() => setCondition('DAMAGED')}
-                            className={`py-3 sm:py-3.5 px-2 text-xs sm:text-sm font-black uppercase rounded-sm transition-all flex items-center justify-center gap-1.5 border active:scale-95 ${
-                              condition === 'DAMAGED'
-                                ? 'bg-amber-600 text-white border-amber-700 shadow-xs ring-2 ring-amber-600/30'
-                                : 'bg-white text-stone-700 border-stone-200 hover:bg-stone-50'
-                            }`}
-                          >
-                            <AlertTriangle className="w-4 h-4 sm:w-5 sm:h-5 shrink-0" />
-                            <span className="truncate">Damaged</span>
-                          </button>
-                          
-                          <button
-                            type="button"
-                            onClick={() => setCondition('EXPIRED')}
-                            className={`py-3 sm:py-3.5 px-2 text-xs sm:text-sm font-black uppercase rounded-sm transition-all flex items-center justify-center gap-1.5 border active:scale-95 ${
-                              condition === 'EXPIRED'
-                                ? 'bg-red-700 text-white border-red-800 shadow-xs ring-2 ring-red-600/30'
-                                : 'bg-white text-stone-700 border-stone-200 hover:bg-stone-50'
-                            }`}
-                          >
-                            <Clock className="w-4 h-4 sm:w-5 sm:h-5 shrink-0" />
-                            <span className="truncate">Expired</span>
-                          </button>
-                        </div>
-                      </div>
-                    </div>
-
-                    {/* Right Column: Keypad & Quantity */}
-                    <div className="md:col-span-7 flex flex-col gap-3.5">
-                      
-                      <div className="bg-stone-900 text-white p-4 sm:p-5 rounded-sm shadow-xs flex items-center justify-between border border-stone-800">
-                        <span className="text-xs sm:text-sm font-black uppercase tracking-widest text-stone-400">
-                          Counted Qty
-                        </span>
-                        <div className="text-3xl sm:text-5xl font-mono font-black tracking-tight text-right overflow-x-auto select-all">
-                          {quantityStr || '0'}
-                        </div>
-                      </div>
-
-                      {/* Quick Increment Row */}
-                      <div className="grid grid-cols-5 gap-2">
-                        {[1, 5, 10, 25, 50].map((amt) => (
-                          <button
-                            key={amt}
-                            type="button"
-                            onClick={() => handleQuickAdd(amt)}
-                            className="bg-white hover:bg-stone-50 active:bg-stone-200 active:scale-95 text-stone-800 border border-stone-300 font-mono font-black text-xs sm:text-sm py-2.5 sm:py-3 rounded-sm shadow-2xs transition-all flex items-center justify-center gap-0.5 select-none"
-                          >
-                            <span>+{amt}</span>
-                          </button>
-                        ))}
-                      </div>
-
-                      {/* Numpad 4x3 Grid */}
-                      <div className="grid grid-cols-3 gap-2 bg-white p-2.5 sm:p-3 rounded-sm border border-stone-200 shadow-xs select-none">
-                        {['7','8','9','4','5','6','1','2','3','CLR','0','DEL'].map((k) => (
-                          <button
-                            key={k}
-                            type="button"
-                            onClick={() => handleNumpad(k)}
-                            className={`h-12 sm:h-14 md:h-16 text-xl sm:text-2xl font-mono font-black rounded-sm flex items-center justify-center transition-all active:scale-95 border ${
-                              k === 'CLR'
-                                ? 'bg-stone-100 text-red-600 border-stone-200 hover:bg-red-50 text-base sm:text-lg'
-                                : k === 'DEL'
-                                  ? 'bg-stone-100 text-stone-700 border-stone-200 hover:bg-stone-200 text-base sm:text-lg'
-                                  : 'bg-stone-50 text-stone-900 border-stone-200 hover:bg-stone-100'
-                            }`}
-                          >
-                            {k === 'DEL' ? <RotateCcw className="w-5 h-5" /> : k}
-                          </button>
-                        ))}
-                      </div>
-
-                      {/* Action Buttons: Subtract / Save */}
-                      <div className="flex gap-2.5 pt-1">
-                        <button
-                          onClick={() => handleSave(true)}
-                          disabled={!quantityStr || loading}
-                          className="w-1/3 bg-stone-100 border border-stone-300 active:bg-stone-200 hover:bg-stone-200 text-stone-700 font-black text-xs sm:text-sm md:text-base h-14 sm:h-16 rounded-sm shadow-xs flex items-center justify-center gap-1.5 disabled:opacity-30 select-none transition-all"
-                          title="Subtract quantity if miscounted"
-                        >
-                          <Minus className="w-5 h-5 text-stone-500 shrink-0" />
-                          <span>SUBTRACT</span>
-                        </button>
-                        
-                        <button
-                          onClick={() => handleSave(false)}
-                          disabled={!quantityStr || loading}
-                          className="w-2/3 bg-green-700 hover:bg-green-800 active:bg-green-900 active:scale-[0.99] text-white font-black text-sm sm:text-base md:text-lg h-14 sm:h-16 rounded-sm shadow-sm flex items-center justify-center gap-2 disabled:opacity-40 select-none transition-all border border-green-800"
-                        >
-                          <Save className="w-5 h-5 sm:w-6 sm:h-6 shrink-0" />
-                          <span>{loading ? 'SAVING...' : `SAVE COUNT (${condition})`}</span>
-                        </button>
-                      </div>
-
-                    </div>
-                  </div>
-                </div>
-              )
-            ) : (
-              // TAB 2: MY RECORDED COUNTS
+            ) : !selectedItem ? (
+              // SEARCH / SCAN BARCODE TO COUNT
               <div className="flex flex-col h-full flex-1 animate-in fade-in duration-150">
                 
-                <div className="mb-4 flex flex-col sm:flex-row sm:items-center justify-between gap-2.5 shrink-0">
-                  <div>
-                    <h2 className="font-black text-base sm:text-lg text-stone-900">My Recorded Counts</h2>
-                    <p className="text-xs sm:text-sm text-stone-500">Items submitted during this active session</p>
-                  </div>
-                  
-                  <div className="flex items-center gap-2 flex-wrap">
-                    <span className="text-xs sm:text-sm bg-white px-3 py-1.5 rounded-sm border border-stone-200 font-bold text-stone-700">
-                      Total Units: <strong className="text-stone-900 font-black">{totalUnitsCounted}</strong>
-                    </span>
-                    {goodUnits > 0 && (
-                      <span className="text-xs sm:text-sm bg-green-50 px-2.5 py-1.5 rounded-sm border border-green-200 font-bold text-green-800">
-                        {goodUnits} Good
-                      </span>
-                    )}
-                    {damagedUnits > 0 && (
-                      <span className="text-xs sm:text-sm bg-amber-50 px-2.5 py-1.5 rounded-sm border border-amber-200 font-bold text-amber-800">
-                        {damagedUnits} Damaged
-                      </span>
-                    )}
-                    {expiredUnits > 0 && (
-                      <span className="text-xs sm:text-sm bg-red-50 px-2.5 py-1.5 rounded-sm border border-red-200 font-bold text-red-800">
-                        {expiredUnits} Expired
-                      </span>
-                    )}
-                  </div>
+                <div className="relative mb-3 shrink-0">
+                  <Search className="w-5 h-5 sm:w-6 sm:h-6 absolute left-3.5 sm:left-4 top-3.5 sm:top-4 text-stone-400" />
+                  <input 
+                    ref={searchInputRef}
+                    type="text" 
+                    placeholder="Scan barcode or type item name..." 
+                    value={query}
+                    onChange={(e) => setQuery(e.target.value)}
+                    onKeyDown={handleSearchKeyDown}
+                    className="w-full bg-white border-2 border-stone-300 text-base sm:text-lg p-3.5 sm:p-4 pl-11 sm:pl-12 pr-11 sm:pr-12 rounded-sm focus:outline-none focus:border-stone-900 transition-colors shadow-2xs font-sans"
+                  />
+                  {query && (
+                    <button 
+                      onClick={() => setQuery('')} 
+                      className="absolute right-3.5 sm:right-4 top-3.5 sm:top-4 text-stone-400 hover:text-stone-700 p-1"
+                      title="Clear search"
+                    >
+                      <X className="w-5 h-5 sm:w-6 sm:h-6" />
+                    </button>
+                  )}
                 </div>
 
+                {/* Results List */}
                 <div className="flex-1 overflow-y-auto bg-white rounded-sm shadow-xs border border-stone-200 divide-y divide-stone-100">
-                  {myCounts.length === 0 ? (
-                    <div className="p-10 sm:p-14 text-center text-stone-400">
-                      <List className="w-10 h-10 sm:w-12 sm:h-12 mx-auto mb-3 opacity-30 text-stone-400" />
-                      <p className="font-bold text-sm sm:text-base text-stone-700">No scans recorded yet</p>
-                      <p className="text-xs sm:text-sm mt-1 text-stone-400">Your counts for this stocktake session will appear here.</p>
+                  {results.length === 0 && query.trim().length >= 2 ? (
+                    <div className="p-10 text-center text-stone-400">
+                      <p className="font-bold text-base text-stone-600">No items found</p>
+                      <p className="text-xs mt-1">Check barcode number or product name.</p>
+                    </div>
+                  ) : results.length === 0 ? (
+                    <div className="p-12 text-center text-stone-400">
+                      <Barcode className="w-12 h-12 mx-auto mb-3 opacity-30 text-stone-400" />
+                      <p className="font-black text-stone-700 text-base">Scan Barcode to Count</p>
+                      <p className="text-xs sm:text-sm mt-1 text-stone-400 max-w-xs mx-auto">
+                        Point the scanner or enter the item code to log counted shelf quantities.
+                      </p>
                     </div>
                   ) : (
-                    myCounts.map((item, idx) => (
-                      <div key={idx} className="p-4 sm:p-5 flex items-center justify-between hover:bg-stone-50/50">
-                        <div className="pr-3 min-w-0">
-                          <p className="font-black text-stone-900 text-sm sm:text-base leading-snug truncate">
+                    results.map((item) => (
+                      <div
+                        key={item.item_lookup_code || item.sku}
+                        onClick={() => handleSelectCountItem(item)}
+                        className="p-4 hover:bg-stone-50 active:bg-stone-100 cursor-pointer transition-colors border-b border-stone-100 last:border-0"
+                      >
+                        <div className="flex items-start justify-between gap-3">
+                          <p className="font-black text-stone-900 text-sm sm:text-base leading-snug line-clamp-2">
                             {item.description}
                           </p>
-                          <div className="flex items-center gap-2 mt-1.5 flex-wrap">
-                            <span className="text-xs font-mono text-stone-600 bg-stone-100 px-2 py-0.5 rounded-sm border border-stone-200">
-                              {item.item_lookup_code}
-                            </span>
-                            {item.condition && (
-                              <span className={`text-xs font-black uppercase px-2 py-0.5 rounded-sm border ${
-                                item.condition === 'DAMAGED' 
-                                  ? 'bg-amber-100 text-amber-800 border-amber-200' 
-                                  : item.condition === 'EXPIRED' 
-                                    ? 'bg-red-100 text-red-800 border-red-200' 
-                                    : 'bg-green-100 text-green-800 border-green-200'
-                              }`}>
-                                {item.condition}
+                          <div className="flex items-center gap-1.5 flex-wrap shrink-0">
+                            {item.category && (
+                              <span className="text-xs uppercase font-bold tracking-wider px-2 py-0.5 rounded-sm bg-stone-100 text-stone-700 border border-stone-200">
+                                {item.category}
+                              </span>
+                            )}
+                            {item.supplier && item.supplier !== 'Unknown' && (
+                              <span className="text-xs uppercase font-bold tracking-wider px-2 py-0.5 rounded-sm bg-amber-50 text-amber-800 border border-amber-200 truncate max-w-[140px] sm:max-w-[180px]">
+                                {item.supplier}
                               </span>
                             )}
                           </div>
                         </div>
                         
-                        <div className="text-lg sm:text-xl font-mono font-black bg-stone-100 px-3.5 py-2 rounded-sm border border-stone-200 text-stone-900 shrink-0">
-                          {item.total_quantity}
+                        <div className="flex items-center justify-between text-xs sm:text-sm text-stone-500 mt-2.5 font-mono">
+                          <span className="bg-stone-100 px-2.5 py-1 rounded-sm text-stone-800 font-bold border border-stone-200">
+                            {item.item_lookup_code || item.sku}
+                          </span>
+                          <span className="text-xs text-stone-400 font-sans font-bold">Tap to Count</span>
                         </div>
                       </div>
                     ))
                   )}
                 </div>
-                
-                <div className="pt-3.5 shrink-0">
-                  <button
-                    onClick={handleCommit}
-                    disabled={loading || myCounts.length === 0}
-                    className="w-full bg-stone-900 hover:bg-black active:scale-[0.99] text-white font-black text-sm sm:text-base py-4 sm:py-4.5 rounded-sm shadow-sm flex items-center justify-center gap-2.5 disabled:opacity-40 select-none transition-all border border-black"
-                  >
-                    <CheckCircle className="w-5 h-5 text-green-400" />
-                    <span>COMPLETE & COMMIT MY COUNTS</span>
-                  </button>
-                </div>
+              </div>
+            ) : (
+              // PHYSICAL COUNTING KEYPAD
+              <div className="flex flex-col flex-1 animate-in slide-in-from-right-3">
+                <div className="grid grid-cols-1 md:grid-cols-12 gap-3.5 sm:gap-5 md:gap-6 items-start">
+                  
+                  {/* Left Column: Product Details & Condition */}
+                  <div className="md:col-span-5 flex flex-col gap-3.5">
+                    <div className="bg-white p-4 sm:p-5 rounded-sm shadow-xs border border-stone-200 relative">
+                      <button 
+                        onClick={() => setSelectedItem(null)}
+                        className="absolute top-3.5 right-3.5 p-2 bg-stone-100 hover:bg-stone-200 active:scale-90 rounded-sm text-stone-600 transition-all border border-stone-200"
+                        title="Cancel"
+                      >
+                        <X className="w-5 h-5" />
+                      </button>
+                      
+                      <div className="flex items-center gap-2 mb-2 flex-wrap pr-10">
+                        {selectedItem.category && (
+                          <span className="text-xs uppercase font-black px-2.5 py-1 bg-blue-50 text-blue-700 rounded-sm border border-blue-200">
+                            {selectedItem.category}
+                          </span>
+                        )}
+                        {selectedItem.supplier && selectedItem.supplier !== 'Unknown' && (
+                          <span className="text-xs uppercase font-bold px-2.5 py-1 bg-amber-50 text-amber-800 rounded-sm border border-amber-200">
+                            {selectedItem.supplier}
+                          </span>
+                        )}
+                      </div>
 
+                      <h2 className="text-base sm:text-xl font-black text-stone-900 pr-4 leading-tight mb-2.5">
+                        {selectedItem.description}
+                      </h2>
+                      
+                      <div className="flex items-center justify-between text-xs sm:text-sm font-mono text-stone-600 pt-2 border-t border-stone-100">
+                        <span className="bg-stone-100 px-2.5 py-1 rounded-sm font-bold border border-stone-200 text-stone-800">
+                          {selectedItem.item_lookup_code || selectedItem.sku}
+                        </span>
+                      </div>
+                    </div>
+
+                    {/* Condition Selector */}
+                    <div className="bg-white p-3.5 sm:p-4 rounded-sm shadow-xs border border-stone-200">
+                      <span className="text-xs font-black uppercase tracking-wider text-stone-400 block mb-2.5">
+                        Item Condition
+                      </span>
+                      <div className="grid grid-cols-3 gap-2">
+                        <button
+                          type="button"
+                          onClick={() => setCondition('GOOD')}
+                          className={`py-3 sm:py-3.5 px-2 text-xs sm:text-sm font-black uppercase rounded-sm transition-all flex items-center justify-center gap-1.5 border active:scale-95 ${
+                            condition === 'GOOD'
+                              ? 'bg-green-700 text-white border-green-800 shadow-xs ring-2 ring-green-600/30'
+                              : 'bg-white text-stone-700 border-stone-200 hover:bg-stone-50'
+                          }`}
+                        >
+                          <ShieldCheck className="w-4 h-4 sm:w-5 sm:h-5 shrink-0" />
+                          <span className="truncate">Good</span>
+                        </button>
+                        
+                        <button
+                          type="button"
+                          onClick={() => setCondition('DAMAGED')}
+                          className={`py-3 sm:py-3.5 px-2 text-xs sm:text-sm font-black uppercase rounded-sm transition-all flex items-center justify-center gap-1.5 border active:scale-95 ${
+                            condition === 'DAMAGED'
+                              ? 'bg-amber-600 text-white border-amber-700 shadow-xs ring-2 ring-amber-600/30'
+                              : 'bg-white text-stone-700 border-stone-200 hover:bg-stone-50'
+                          }`}
+                        >
+                          <AlertTriangle className="w-4 h-4 sm:w-5 sm:h-5 shrink-0" />
+                          <span className="truncate">Damaged</span>
+                        </button>
+                        
+                        <button
+                          type="button"
+                          onClick={() => setCondition('EXPIRED')}
+                          className={`py-3 sm:py-3.5 px-2 text-xs sm:text-sm font-black uppercase rounded-sm transition-all flex items-center justify-center gap-1.5 border active:scale-95 ${
+                            condition === 'EXPIRED'
+                              ? 'bg-red-700 text-white border-red-800 shadow-xs ring-2 ring-red-600/30'
+                              : 'bg-white text-stone-700 border-stone-200 hover:bg-stone-50'
+                          }`}
+                        >
+                          <Clock className="w-4 h-4 sm:w-5 sm:h-5 shrink-0" />
+                          <span className="truncate">Expired</span>
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Right Column: Keypad & Quantity */}
+                  <div className="md:col-span-7 flex flex-col gap-3.5">
+                    
+                    <div className="bg-stone-900 text-white p-4 sm:p-5 rounded-sm shadow-xs flex items-center justify-between border border-stone-800">
+                      <span className="text-xs sm:text-sm font-black uppercase tracking-widest text-stone-400">
+                        Counted Qty
+                      </span>
+                      <div className="text-3xl sm:text-5xl font-mono font-black tracking-tight text-right overflow-x-auto select-all">
+                        {quantityStr || '0'}
+                      </div>
+                    </div>
+
+                    {/* Quick Increment Row */}
+                    <div className="grid grid-cols-5 gap-2">
+                      {[1, 5, 10, 25, 50].map((amt) => (
+                        <button
+                          key={amt}
+                          type="button"
+                          onClick={() => handleQuickAdd(amt)}
+                          className="bg-white hover:bg-stone-50 active:bg-stone-200 active:scale-95 text-stone-800 border border-stone-300 font-mono font-black text-xs sm:text-sm py-2.5 sm:py-3 rounded-sm shadow-2xs transition-all flex items-center justify-center gap-0.5 select-none"
+                        >
+                          <span>+{amt}</span>
+                        </button>
+                      ))}
+                    </div>
+
+                    {/* Numpad 4x3 Grid */}
+                    <div className="grid grid-cols-3 gap-2 bg-white p-2.5 sm:p-3 rounded-sm border border-stone-200 shadow-xs select-none">
+                      {['7','8','9','4','5','6','1','2','3','CLR','0','DEL'].map((k) => (
+                        <button
+                          key={k}
+                          type="button"
+                          onClick={() => handleNumpad(k)}
+                          className={`h-12 sm:h-14 md:h-16 text-xl sm:text-2xl font-mono font-black rounded-sm flex items-center justify-center transition-all active:scale-95 border ${
+                            k === 'CLR'
+                              ? 'bg-stone-100 text-red-600 border-stone-200 hover:bg-red-50 text-base sm:text-lg'
+                              : k === 'DEL'
+                                ? 'bg-stone-100 text-stone-700 border-stone-200 hover:bg-stone-200 text-base sm:text-lg'
+                                : 'bg-stone-50 text-stone-900 border-stone-200 hover:bg-stone-100'
+                          }`}
+                        >
+                          {k === 'DEL' ? <RotateCcw className="w-5 h-5" /> : k}
+                        </button>
+                      ))}
+                    </div>
+
+                    {/* Action Buttons: Subtract / Save */}
+                    <div className="flex gap-2.5 pt-1">
+                      <button
+                        onClick={() => handleSave(true)}
+                        disabled={!quantityStr || loading}
+                        className="w-1/3 bg-stone-100 border border-stone-300 active:bg-stone-200 hover:bg-stone-200 text-stone-700 font-black text-xs sm:text-sm md:text-base h-14 sm:h-16 rounded-sm shadow-xs flex items-center justify-center gap-1.5 disabled:opacity-30 select-none transition-all"
+                        title="Subtract quantity if miscounted"
+                      >
+                        <Minus className="w-5 h-5 text-stone-500 shrink-0" />
+                        <span>SUBTRACT</span>
+                      </button>
+                      
+                      <button
+                        onClick={() => handleSave(false)}
+                        disabled={!quantityStr || loading}
+                        className="w-2/3 bg-green-700 hover:bg-green-800 active:bg-green-900 active:scale-[0.99] text-white font-black text-sm sm:text-base md:text-lg h-14 sm:h-16 rounded-sm shadow-sm flex items-center justify-center gap-2 disabled:opacity-40 select-none transition-all border border-green-800"
+                      >
+                        <Save className="w-5 h-5 sm:w-6 sm:h-6 shrink-0" />
+                        <span>{loading ? 'SAVING...' : `SAVE COUNT (${condition})`}</span>
+                      </button>
+                    </div>
+
+                  </div>
+                </div>
               </div>
             )}
+
+          </div>
+        )}
+
+        {/* ======================================================================= */}
+        {/* MODE 3: MY RECORDED COUNTS */}
+        {/* ======================================================================= */}
+        {activeTab === 'counts' && (
+          <div className="flex flex-col h-full flex-1 animate-in fade-in duration-150">
+            
+            <div className="mb-4 flex flex-col sm:flex-row sm:items-center justify-between gap-2.5 shrink-0">
+              <div>
+                <h2 className="font-black text-base sm:text-lg text-stone-900">My Recorded Counts</h2>
+                <p className="text-xs sm:text-sm text-stone-500">Items submitted during this active session</p>
+              </div>
+              
+              <div className="flex items-center gap-2 flex-wrap">
+                <span className="text-xs sm:text-sm bg-white px-3 py-1.5 rounded-sm border border-stone-200 font-bold text-stone-700">
+                  Total Units: <strong className="text-stone-900 font-black">{totalUnitsCounted}</strong>
+                </span>
+                {goodUnits > 0 && (
+                  <span className="text-xs sm:text-sm bg-green-50 px-2.5 py-1.5 rounded-sm border border-green-200 font-bold text-green-800">
+                    {goodUnits} Good
+                  </span>
+                )}
+                {damagedUnits > 0 && (
+                  <span className="text-xs sm:text-sm bg-amber-50 px-2.5 py-1.5 rounded-sm border border-amber-200 font-bold text-amber-800">
+                    {damagedUnits} Damaged
+                  </span>
+                )}
+                {expiredUnits > 0 && (
+                  <span className="text-xs sm:text-sm bg-red-50 px-2.5 py-1.5 rounded-sm border border-red-200 font-bold text-red-800">
+                    {expiredUnits} Expired
+                  </span>
+                )}
+              </div>
+            </div>
+
+            <div className="flex-1 overflow-y-auto bg-white rounded-sm shadow-xs border border-stone-200 divide-y divide-stone-100">
+              {myCounts.length === 0 ? (
+                <div className="p-10 sm:p-14 text-center text-stone-400">
+                  <List className="w-10 h-10 sm:w-12 sm:h-12 mx-auto mb-3 opacity-30 text-stone-400" />
+                  <p className="font-bold text-sm sm:text-base text-stone-700">No scans recorded yet</p>
+                  <p className="text-xs sm:text-sm mt-1 text-stone-400">Your counts for this stocktake session will appear here.</p>
+                </div>
+              ) : (
+                myCounts.map((item, idx) => (
+                  <div key={idx} className="p-4 sm:p-5 flex items-center justify-between hover:bg-stone-50/50">
+                    <div className="pr-3 min-w-0">
+                      <p className="font-black text-stone-900 text-sm sm:text-base leading-snug truncate">
+                        {item.description}
+                      </p>
+                      <div className="flex items-center gap-2 mt-1.5 flex-wrap">
+                        <span className="text-xs font-mono text-stone-600 bg-stone-100 px-2 py-0.5 rounded-sm border border-stone-200">
+                          {item.item_lookup_code}
+                        </span>
+                        {item.condition && (
+                          <span className={`text-xs font-black uppercase px-2 py-0.5 rounded-sm border ${
+                            item.condition === 'DAMAGED' 
+                              ? 'bg-amber-100 text-amber-800 border-amber-200' 
+                              : item.condition === 'EXPIRED' 
+                                ? 'bg-red-100 text-red-800 border-red-200' 
+                                : 'bg-green-100 text-green-800 border-green-200'
+                          }`}>
+                            {item.condition}
+                          </span>
+                        )}
+                      </div>
+                    </div>
+                    
+                    <div className="text-lg sm:text-xl font-mono font-black bg-stone-100 px-3.5 py-2 rounded-sm border border-stone-200 text-stone-900 shrink-0">
+                      {item.total_quantity}
+                    </div>
+                  </div>
+                ))
+              )}
+            </div>
+            
+            <div className="pt-3.5 shrink-0">
+              <button
+                onClick={handleCommit}
+                disabled={loading || myCounts.length === 0}
+                className="w-full bg-stone-900 hover:bg-black active:scale-[0.99] text-white font-black text-sm sm:text-base py-4 sm:py-4.5 rounded-sm shadow-sm flex items-center justify-center gap-2.5 disabled:opacity-40 select-none transition-all border border-black"
+              >
+                <CheckCircle className="w-5 h-5 text-green-400" />
+                <span>COMPLETE & COMMIT MY COUNTS</span>
+              </button>
+            </div>
 
           </div>
         )}
@@ -1005,12 +1010,29 @@ const MobileScanner = ({ sessionId = 1, setAuth }) => {
       </main>
 
       {/* ========================================================================= */}
-      {/* Bottom Navigation: ONLY rendered during an ACTIVE STOCKTAKE SESSION */}
-      {/* When no session is active, Price & Stock view has full screen space */}
+      {/* Bottom Navigation: ONLY shown when an active stocktake session exists */}
+      {/* Allows switching between Price & Stock, Scan to Count, and My Counts */}
       {/* ========================================================================= */}
       {hasActiveSession && !isCommitted && (
         <nav className="fixed bottom-0 left-0 right-0 bg-white border-t border-stone-200 flex shadow-lg z-50 h-16">
           
+          {/* Tab 1: Price & Stock */}
+          <button 
+            onClick={() => {
+              setActiveTab('lookup');
+              setSelectedLookupItem(null);
+            }}
+            className={`flex-1 flex flex-col items-center justify-center gap-1 transition-colors ${
+              activeTab === 'lookup' 
+                ? 'text-green-800 font-black bg-green-50/40 border-t-2 border-green-700' 
+                : 'text-stone-500 hover:text-stone-800'
+            }`}
+          >
+            <Tag className="w-5 h-5" />
+            <span className="text-[11px] sm:text-xs font-bold">Price & Stock</span>
+          </button>
+
+          {/* Tab 2: Scan to Count */}
           <button 
             onClick={() => {
               setActiveTab('scan');
@@ -1026,6 +1048,7 @@ const MobileScanner = ({ sessionId = 1, setAuth }) => {
             <span className="text-[11px] sm:text-xs font-bold">Scan to Count</span>
           </button>
           
+          {/* Tab 3: My Counts */}
           <button 
             onClick={() => setActiveTab('counts')}
             className={`flex-1 flex flex-col items-center justify-center gap-1 transition-colors ${

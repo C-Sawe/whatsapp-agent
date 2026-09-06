@@ -1446,7 +1446,12 @@ def build_session_stocktake_data(cur, session_id: int):
 STORE_NAMES_MAP = {1: "Main", 2: "Shop", 3: "Nandi Hills"}
 
 @app.get("/api/items/search")
-def search_items(q: str = "", store_id: Optional[str] = None, token_data: dict = Depends(verify_credentials)):
+def search_items(
+    q: str = "", 
+    store_id: Optional[str] = None, 
+    for_count: bool = False,
+    token_data: dict = Depends(verify_credentials)
+):
     if not db_pool:
         return []
 
@@ -1456,10 +1461,6 @@ def search_items(q: str = "", store_id: Optional[str] = None, token_data: dict =
         cur = conn.cursor()
         scope = token_data.get("scope", "all")
         cur.execute("SET LOCAL app.store_id = %s", (scope,))
-
-        # Check if there is an active stocktake session
-        cur.execute("SELECT id, store_id FROM inventory_sessions WHERE status = 'OPEN' ORDER BY created_at DESC LIMIT 1")
-        open_session = cur.fetchone()
 
         tokens = [t for t in clean_q.split() if t]
         conditions = []
@@ -1471,10 +1472,13 @@ def search_items(q: str = "", store_id: Optional[str] = None, token_data: dict =
 
         prefix_term = f"{clean_q}%" if clean_q else "%"
 
-        if open_session:
-            # Active stocktake session: Unbiased blind count
-            # System expected stock and prices are masked
-            session_store_id = open_session[1] or 1
+        if for_count:
+            # Unbiased physical stocktake count mode:
+            # Expected stock quantities and prices are completely masked
+            cur.execute("SELECT session_id, store_id FROM inventory_sessions WHERE status = 'OPEN' ORDER BY created_at DESC LIMIT 1")
+            open_session = cur.fetchone()
+            session_store_id = open_session[1] if (open_session and open_session[1]) else 1
+
             session_where = "WHERE store_id = %s" + (f" AND {' AND '.join(conditions)}" if conditions else "")
             query = f"""
                 SELECT sku, description, category, COALESCE(supplier, 'Unknown')
@@ -1499,8 +1503,8 @@ def search_items(q: str = "", store_id: Optional[str] = None, token_data: dict =
                 for r in rows
             ]
         else:
-            # Daily Price & Stock Lookup mode:
-            # Only showcase actual stock from Main Store (store_id = 1)
+            # Price & Actual Stock Lookup mode:
+            # Exclusively showcase actual stock from Main Store (store_id = 1)
             target_store_id = 1
             main_where = "WHERE store_id = %s" + (f" AND {' AND '.join(conditions)}" if conditions else "")
             query = f"""

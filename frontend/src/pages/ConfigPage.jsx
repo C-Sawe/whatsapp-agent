@@ -1,8 +1,10 @@
 import React, { useState, useEffect } from 'react';
-import { Settings, Save, CheckCircle, Activity, Send } from 'lucide-react';
+import { Settings, Save, CheckCircle, Activity, Send, Cloud, MessageSquare } from 'lucide-react';
 import api from '../api';
 
 export default function ConfigPage() {
+  const [activeTab, setActiveTab] = useState('whatsapp');
+
   const [config, setConfig] = useState({});
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
@@ -14,6 +16,10 @@ export default function ConfigPage() {
   const [testResponse, setTestResponse] = useState('');
   const [testing, setTesting] = useState(false);
   const [apiLimits, setApiLimits] = useState(null);
+
+  // Cloud Metrics state
+  const [metrics, setMetrics] = useState(null);
+  const [metricsError, setMetricsError] = useState('');
 
   const fetchConfig = async () => {
     try {
@@ -53,9 +59,30 @@ export default function ConfigPage() {
     }
   };
 
+  const fetchMetrics = async () => {
+    try {
+      const auth = localStorage.getItem('mosop_auth');
+      const res = await api.get('/api/metrics', {
+        headers: { Authorization: auth }
+      });
+      if (res.data.status === 'success') {
+        setMetrics(res.data.metrics);
+      } else {
+        setMetricsError('Failed to load metrics data');
+      }
+    } catch (err) {
+      setMetricsError('Error fetching metrics');
+    }
+  };
+
   useEffect(() => {
     fetchConfig();
     fetchGroqStatus();
+    fetchMetrics();
+    const interval = setInterval(() => {
+      fetchMetrics();
+    }, 10000);
+    return () => clearInterval(interval);
   }, []);
 
   const handleChange = (key, value) => {
@@ -97,7 +124,6 @@ export default function ConfigPage() {
     }
   };
 
-
   if (loading) {
     return <div className="min-h-[50vh] flex items-center justify-center text-xs font-black uppercase tracking-widest text-stone-500 animate-pulse">Initializing Configuration Matrix...</div>;
   }
@@ -136,18 +162,8 @@ export default function ConfigPage() {
     </div>
   );
 
-  return (
+  const renderWhatsAppConfig = () => (
     <div>
-      <div className="flex items-center gap-4 mb-8">
-        <div className="bg-stone-900 p-3 rounded-sm">
-          <Settings size={24} className="text-green-500" />
-        </div>
-        <div>
-          <h1 className="text-xl font-black uppercase tracking-widest text-stone-900 m-0">Configurations</h1>
-          <p className="text-stone-500 text-xs font-bold uppercase tracking-widest mt-1 m-0">System behavior parameters</p>
-        </div>
-      </div>
-
       <div className="mb-8">
         <div className="bg-white border border-stone-200 rounded-sm p-6 shadow-sm">
           <div className="flex justify-between items-start mb-6">
@@ -232,6 +248,115 @@ export default function ConfigPage() {
             {renderField('SECURITY_RULES', 'Security & Guardrails', 'textarea', 10)}
           </div>
         </div>
+      </div>
+    </div>
+  );
+
+  const renderCloudMetrics = () => {
+    if (metricsError) {
+      return <div className="p-6 bg-red-50 text-red-600 rounded-sm">{metricsError}</div>;
+    }
+    if (!metrics) {
+      return <div className="p-6 text-stone-500 animate-pulse">Loading metrics...</div>;
+    }
+
+    const uptimeHours = (metrics.uptime_seconds / 3600).toFixed(1);
+
+    return (
+      <div>
+        <div className="mb-6">
+          <h2 className="text-sm font-black uppercase tracking-widest text-stone-900">Live Resource Utilization</h2>
+          <p className="text-stone-500 text-xs font-bold uppercase tracking-widest mt-1">Real-time metrics from the cloud</p>
+        </div>
+
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4 mb-8">
+          <div className="bg-white p-6 rounded-sm border border-stone-200 shadow-sm flex flex-col justify-between">
+            <span className="text-stone-500 text-xs font-black uppercase tracking-widest">Server Uptime</span>
+            <span className="text-3xl font-bold text-stone-900 mt-2">{uptimeHours} <span className="text-sm font-normal text-stone-500">hrs</span></span>
+          </div>
+          <div className="bg-white p-6 rounded-sm border border-stone-200 shadow-sm flex flex-col justify-between">
+            <span className="text-stone-500 text-xs font-black uppercase tracking-widest">CPU Usage</span>
+            <span className={`text-3xl font-bold ${metrics.cpu_percent > 80 ? 'text-red-500' : 'text-stone-900'} mt-2`}>
+              {metrics.cpu_percent}%
+            </span>
+          </div>
+          <div className="bg-white p-6 rounded-sm border border-stone-200 shadow-sm flex flex-col justify-between">
+            <span className="text-stone-500 text-xs font-black uppercase tracking-widest">Memory Usage</span>
+            <span className={`text-3xl font-bold ${metrics.memory_percent > 80 ? 'text-red-500' : 'text-stone-900'} mt-2`}>
+              {metrics.memory_percent}%
+            </span>
+          </div>
+          <div className="bg-white p-6 rounded-sm border border-stone-200 shadow-sm flex flex-col justify-between">
+            <span className="text-stone-500 text-xs font-black uppercase tracking-widest">Database Size</span>
+            <span className="text-3xl font-bold text-blue-600 mt-2">{metrics.db_size_mb.toFixed(2)} <span className="text-sm font-normal text-blue-400">MB</span></span>
+          </div>
+        </div>
+
+        <div className="bg-white p-6 rounded-sm border border-stone-200 shadow-sm">
+          <h2 className="text-sm font-black uppercase tracking-widest text-stone-900 mb-6">Estimated Monthly Costs Breakdown</h2>
+          <div className="space-y-4">
+            <div className="flex justify-between items-center py-3 border-b border-stone-100">
+              <span className="text-stone-600 text-sm font-bold uppercase tracking-widest">Compute Instance (GCP/AWS Equivalent)</span>
+              <span className="font-semibold text-stone-900">$15.00</span>
+            </div>
+            <div className="flex justify-between items-center py-3 border-b border-stone-100">
+              <span className="text-stone-600 text-sm font-bold uppercase tracking-widest">Database Storage ({metrics.db_size_mb.toFixed(2)} MB)</span>
+              <span className="font-semibold text-stone-900">${metrics.estimated_db_cost.toFixed(2)}</span>
+            </div>
+            <div className="flex justify-between items-center py-4 bg-stone-50 px-4 rounded-sm">
+              <span className="text-stone-900 font-black uppercase tracking-widest text-sm">Total Estimated Cost</span>
+              <span className="text-green-600 font-bold text-xl">${metrics.estimated_total_cost.toFixed(2)}</span>
+            </div>
+          </div>
+        </div>
+      </div>
+    );
+  };
+
+  return (
+    <div className="flex flex-col md:flex-row gap-8">
+      {/* Sidebar */}
+      <div className="w-full md:w-64 shrink-0">
+        <div className="flex items-center gap-4 mb-8">
+          <div className="bg-stone-900 p-3 rounded-sm">
+            <Settings size={24} className="text-green-500" />
+          </div>
+          <div>
+            <h1 className="text-xl font-black uppercase tracking-widest text-stone-900 m-0">Configs</h1>
+            <p className="text-stone-500 text-[10px] font-bold uppercase tracking-widest mt-1 m-0">System parameters</p>
+          </div>
+        </div>
+
+        <div className="flex flex-col gap-2">
+          <button
+            onClick={() => setActiveTab('whatsapp')}
+            className={`flex items-center gap-3 px-4 py-3 rounded-sm text-left transition-colors text-xs font-black uppercase tracking-widest ${
+              activeTab === 'whatsapp' 
+                ? 'bg-stone-900 text-white shadow-md' 
+                : 'bg-white text-stone-600 hover:bg-stone-100 border border-stone-200'
+            }`}
+          >
+            <MessageSquare size={16} className={activeTab === 'whatsapp' ? 'text-green-500' : 'text-stone-400'} />
+            WhatsApp Automation
+          </button>
+          
+          <button
+            onClick={() => setActiveTab('cloud')}
+            className={`flex items-center gap-3 px-4 py-3 rounded-sm text-left transition-colors text-xs font-black uppercase tracking-widest ${
+              activeTab === 'cloud' 
+                ? 'bg-stone-900 text-white shadow-md' 
+                : 'bg-white text-stone-600 hover:bg-stone-100 border border-stone-200'
+            }`}
+          >
+            <Cloud size={16} className={activeTab === 'cloud' ? 'text-green-500' : 'text-stone-400'} />
+            Cloud Infrastructure
+          </button>
+        </div>
+      </div>
+
+      {/* Main Content Area */}
+      <div className="flex-1 min-w-0">
+        {activeTab === 'whatsapp' ? renderWhatsAppConfig() : renderCloudMetrics()}
       </div>
     </div>
   );

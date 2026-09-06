@@ -39,7 +39,7 @@ api.interceptors.response.use(
   (response) => response,
   async (error) => {
     const originalRequest = error.config;
-    if (error.response && error.response.status === 401 && !originalRequest._retry) {
+    if (error.response && error.response.status === 401 && !originalRequest._retry && originalRequest.url !== '/api/refresh') {
       if (isRefreshing) {
         return new Promise(function(resolve) {
           subscribeTokenRefresh(token => {
@@ -65,7 +65,9 @@ api.interceptors.response.use(
         isRefreshing = false;
         refreshSubscribers = [];
         setAccessToken(null);
-        window.location.href = '/login';
+        if (window.location.pathname !== '/login') {
+          window.location.href = '/login';
+        }
         return Promise.reject(refreshError);
       }
     }
@@ -74,3 +76,19 @@ api.interceptors.response.use(
 );
 
 export default api;
+
+export const getUserRole = () => {
+  if (!accessToken) return null;
+  try {
+    const base64Url = accessToken.split('.')[1];
+    const base64 = base64Url.replace(/-/g, '+').replace(/_/g, '/');
+    const jsonPayload = decodeURIComponent(atob(base64).split('').map(function(c) {
+        return '%' + ('00' + c.charCodeAt(0).toString(16)).slice(-2);
+    }).join(''));
+    const payload = JSON.parse(jsonPayload);
+    return payload.role || 'ADMIN'; // fallback
+  } catch (e) {
+    return null;
+  }
+};
+

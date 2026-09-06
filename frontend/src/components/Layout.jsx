@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { NavLink, Outlet, useNavigate, useLocation } from 'react-router-dom';
-import { Home, Settings, ShoppingBag, LogOut, ArrowLeft, Menu, X, Database, Users, Calendar, DollarSign } from 'lucide-react';
+import { Home, Settings, ShoppingBag, LogOut, ArrowLeft, Menu, X, Database, Users, Calendar, DollarSign, ClipboardList, UserCog, Truck } from 'lucide-react';
 import api, { setAccessToken } from '../api';
 
 export default function Layout({ setAuth }) {
@@ -26,6 +26,9 @@ export default function Layout({ setAuth }) {
     if (location.pathname === '/debt') return 'ACCOUNTS RECEIVABLE';
     if (location.pathname === '/staff') return 'STAFF PERFORMANCE';
     if (location.pathname === '/quarterly-reports') return 'QUARTERLY REPORTS';
+    if (location.pathname === '/stocktake-manager') return 'STOCKTAKE MANAGER';
+    if (location.pathname === '/staff-management') return 'STAFF MANAGEMENT';
+    if (location.pathname === '/fleet') return 'FLEET RADAR & LOGISTICS';
     return 'DASHBOARD';
   };
 
@@ -118,6 +121,18 @@ export default function Layout({ setAuth }) {
           <NavLink to="/quarterly-reports" className={({isActive}) => `w-full flex items-center gap-3 px-3 py-2.5 rounded-sm transition-all duration-200 group focus-visible:ring-2 focus-visible:ring-green-500 outline-none ${isActive ? 'bg-green-600 text-white font-bold' : 'hover:bg-stone-800 hover:text-white'}`}>
             <Calendar className="w-4 h-4 shrink-0" />
             <span className="text-[10px] uppercase tracking-widest">Quarterly Reports</span>
+          </NavLink>
+          <NavLink to="/stocktake-manager" className={({isActive}) => `w-full flex items-center gap-3 px-3 py-2.5 rounded-sm transition-all duration-200 group focus-visible:ring-2 focus-visible:ring-green-500 outline-none ${isActive ? 'bg-green-600 text-white font-bold' : 'hover:bg-stone-800 hover:text-white'}`}>
+            <ClipboardList className="w-4 h-4 shrink-0" />
+            <span className="text-[10px] uppercase tracking-widest">Stocktake Mgr</span>
+          </NavLink>
+          <NavLink to="/fleet" className={({isActive}) => `w-full flex items-center gap-3 px-3 py-2.5 rounded-sm transition-all duration-200 group focus-visible:ring-2 focus-visible:ring-green-500 outline-none ${isActive ? 'bg-green-600 text-white font-bold' : 'hover:bg-stone-800 hover:text-white'}`}>
+            <Truck className="w-4 h-4 shrink-0" />
+            <span className="text-[10px] uppercase tracking-widest">Fleet Radar</span>
+          </NavLink>
+          <NavLink to="/staff-management" className={({isActive}) => `w-full flex items-center gap-3 px-3 py-2.5 rounded-sm transition-all duration-200 group focus-visible:ring-2 focus-visible:ring-green-500 outline-none ${isActive ? 'bg-green-600 text-white font-bold' : 'hover:bg-stone-800 hover:text-white'}`}>
+            <UserCog className="w-4 h-4 shrink-0" />
+            <span className="text-[10px] uppercase tracking-widest">Staff Accounts</span>
           </NavLink>
 
           <NavLink to="/whatsapp/config" className={({isActive}) => `w-full flex items-center gap-3 px-3 py-2.5 rounded-sm transition-all duration-200 group focus-visible:ring-2 focus-visible:ring-green-500 outline-none ${isActive ? 'bg-green-600 text-white font-bold' : 'hover:bg-stone-800 hover:text-white'}`}>

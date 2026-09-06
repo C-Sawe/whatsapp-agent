@@ -24,7 +24,15 @@ const DebtorsLeaderboard = ({ debtors, page, totalPages, totalDebtors, onPageCha
               <div className="flex flex-col">
                 <span className="text-[10px] font-bold text-stone-400 uppercase tracking-widest">A/C: {d.account_number || 'N/A'}</span>
                 <p className="text-sm font-black text-stone-900">{d.customer_name || 'Unknown Customer'}</p>
-                <span className="text-xs font-medium text-stone-500 mt-1">Limit: {formatCurrency(d.credit_limit)}</span>
+                <div className="flex flex-col gap-0.5 mt-1">
+                  <span className="text-xs font-medium text-stone-500">Limit: {formatCurrency(d.credit_limit)}</span>
+                  {d.last_payment_date && (
+                    <span className="text-xs font-medium text-blue-600">Last Payment: {new Date(d.last_payment_date).toLocaleDateString()}</span>
+                  )}
+                  {d.recent_orders && (
+                    <span className="text-xs font-medium text-emerald-600">Recent Orders: #{d.recent_orders}</span>
+                  )}
+                </div>
               </div>
               <div className="flex items-center justify-between sm:justify-end w-full sm:w-auto gap-4">
                 <div className="text-left sm:text-right">

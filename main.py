@@ -1,6 +1,8 @@
 import os
 import json
-from fastapi import FastAPI, Request, HTTPException, Response, Cookie
+from fastapi import FastAPI, Request, HTTPException, Response, Cookie, WebSocket, WebSocketDisconnect
+import asyncio
+from protrack_service import protrack_service
 import httpx
 from groq import Groq
 import sheets_handler
@@ -9,7 +11,7 @@ from fastapi.security import HTTPBasic, HTTPBasicCredentials, HTTPBearer, HTTPAu
 from fastapi import Depends, status
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, JSONResponse
 from pydantic import BaseModel
 import jwt
 from slowapi import Limiter, _rate_limit_exceeded_handler
@@ -19,16 +21,68 @@ from datetime import datetime, timedelta, timezone
 import time
 import psycopg2
 from psycopg2 import pool
+from psycopg2.extras import RealDictCursor
 from typing import Optional
 from fastapi import Query
 
-PG_DSN = "host=localhost dbname=evolution user=evolution_user password=evolution_db_password_secure_placeholder"
+# Database configuration placeholders
+DB_HOST = os.getenv("DB_HOST", "localhost")
+DB_USER = os.getenv("DB_USER", "evolution_user")
+DB_PASS = os.getenv("DB_PASS", "evolution_db_password_secure_placeholder")
+DB_NAME = os.getenv("DB_NAME", "evolution")
 
 # Initialize global connection pool
+db_pool = None
 try:
-    db_pool = psycopg2.pool.SimpleConnectionPool(1, 20, PG_DSN)
-except Exception as e:
-    print("Failed to initialize database pool:", e)
+    db_pool = psycopg2.pool.SimpleConnectionPool(1, 20, host=DB_HOST, user=DB_USER, password=DB_PASS, dbname=DB_NAME)
+    if db_pool:
+        print("Successfully connected to PostgreSQL connection pool")
+        # Ensure session_participants table exists
+        # Ensure tables exist
+        conn = db_pool.getconn()
+        try:
+            cur = conn.cursor()
+            cur.execute("""
+            CREATE TABLE IF NOT EXISTS session_participants (
+                id SERIAL PRIMARY KEY,
+                session_id INT NOT NULL,
+                user_id INT NOT NULL,
+                status VARCHAR(50) DEFAULT 'COUNTING',
+                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                UNIQUE(session_id, user_id)
+            );
+            """)
+            cur.execute("""
+            CREATE TABLE IF NOT EXISTS inventory_counts (
+                count_id SERIAL PRIMARY KEY,
+                session_id INT NOT NULL,
+                sku VARCHAR(100) NOT NULL,
+                quantity NUMERIC(10, 2) NOT NULL,
+                user_id INTEGER NOT NULL REFERENCES users(id),
+                condition VARCHAR(20) DEFAULT 'GOOD',
+                timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            );
+            """)
+            cur.execute("""
+            CREATE TABLE IF NOT EXISTS item_master (
+                item_lookup_code VARCHAR(255) PRIMARY KEY,
+                description TEXT
+            );
+            """)
+            # Ensure name and description exist on inventory_sessions
+            try:
+                cur.execute("ALTER TABLE inventory_sessions ADD COLUMN IF NOT EXISTS name VARCHAR(255) DEFAULT '';")
+                cur.execute("ALTER TABLE inventory_sessions ADD COLUMN IF NOT EXISTS description TEXT DEFAULT '';")
+                cur.execute("ALTER TABLE inventory_sessions ADD COLUMN IF NOT EXISTS closed_at TIMESTAMP NULL;")
+                cur.execute("ALTER TABLE inventory_sessions ADD COLUMN IF NOT EXISTS allow_live_sales BOOLEAN DEFAULT FALSE;")
+                cur.execute("ALTER TABLE inventory_counts ADD COLUMN IF NOT EXISTS condition VARCHAR(20) DEFAULT 'GOOD';")
+            except Exception as e:
+                print("Failed to alter inventory_sessions:", e)
+            conn.commit()
+        finally:
+            db_pool.putconn(conn)
+except (Exception, psycopg2.DatabaseError) as error:
+    print("Error while connecting to PostgreSQL", error)
 
 limiter = Limiter(key_func=get_remote_address)
 app = FastAPI(title="Mosop Farm Inputs API")
@@ -41,6 +95,7 @@ app.add_middleware(
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
+    expose_headers=["Retry-After", "X-Lockout-Remaining"],
 )
 
 EVOLUTION_API_URL = os.getenv("EVOLUTION_API_URL", "http://localhost:8080")
@@ -313,22 +368,35 @@ security = HTTPBearer()
 
 LOGIN_ATTEMPTS = {}
 MAX_ATTEMPTS = 5
-LOCKOUT_TIME = 900 # 15 minutes
+LOCKOUT_TIME = 60 # 1 minute
+
+import bcrypt
 
 def verify_credentials(credentials: HTTPAuthorizationCredentials = Depends(security)):
     try:
         payload = jwt.decode(credentials.credentials, JWT_SECRET, algorithms=["HS256"])
         if payload.get("type") == "refresh":
             raise HTTPException(status_code=401, detail="Cannot use refresh token as access token")
-        if payload.get("sub") != "MosopAdmin@mosopfarminputs.co.ke":
-            raise HTTPException(status_code=401, detail="Invalid token subject")
+        # Removing strict admin check to allow employee tokens
         return payload
     except jwt.ExpiredSignatureError:
         raise HTTPException(status_code=401, detail="Token expired")
     except jwt.InvalidTokenError:
         raise HTTPException(status_code=401, detail="Invalid token")
 
-def get_db_cursor(token_data: dict = Depends(verify_credentials)):
+
+def verify_admin(token_data: dict = Depends(verify_credentials)):
+    if token_data.get("role") != "ADMIN":
+        raise HTTPException(status_code=403, detail="Admin access required")
+    return token_data
+
+def verify_manager_or_admin(token_data: dict = Depends(verify_credentials)):
+    if token_data.get("role") not in ["ADMIN", "MANAGER"]:
+        raise HTTPException(status_code=403, detail="Manager or Admin access required")
+    return token_data
+
+
+def get_db_cursor(token_data: dict = Depends(verify_manager_or_admin)):
     conn = db_pool.getconn()
     try:
         cur = conn.cursor()
@@ -343,7 +411,7 @@ class LoginRequest(BaseModel):
     password: str
 
 @app.post("/api/login")
-@limiter.limit("5/minute")
+@limiter.limit("15/minute")
 def api_login(req: LoginRequest, request: Request, response: Response):
     client_ip = request.client.host
     now = time.time()
@@ -351,23 +419,66 @@ def api_login(req: LoginRequest, request: Request, response: Response):
     if client_ip in LOGIN_ATTEMPTS:
         attempts, lockout_expiry = LOGIN_ATTEMPTS[client_ip]
         if lockout_expiry and now < lockout_expiry:
-            raise HTTPException(status_code=429, detail="Too many failed attempts. Try again later.")
+            remaining = max(1, int(lockout_expiry - now))
+            return JSONResponse(
+                status_code=429,
+                content={
+                    "detail": "Maximum attempts exceeded. Lockout active.",
+                    "remaining_seconds": remaining
+                },
+                headers={"Retry-After": str(remaining), "X-Lockout-Remaining": str(remaining)}
+            )
         elif lockout_expiry and now >= lockout_expiry:
             LOGIN_ATTEMPTS[client_ip] = [0, None]
     else:
         LOGIN_ATTEMPTS[client_ip] = [0, None]
         
-    correct_username = secrets.compare_digest(req.username, "MosopAdmin@mosopfarminputs.co.ke")
-    correct_password = secrets.compare_digest(req.password, "07-888-Sawe")
+    clean_username = req.username.strip()
+    clean_password = req.password.strip()
+    correct_username = secrets.compare_digest(clean_username, "MosopAdmin@mosopfarminputs.co.ke")
+    correct_password = secrets.compare_digest(clean_password, "07-888-Sawe")
+    
+    role = "ADMIN"
+    user_id = None
+    is_authenticated = False
     
     if correct_username and correct_password:
+        is_authenticated = True
+    elif db_pool is not None:
+        # Check DB for employee
+        try:
+            conn = db_pool.getconn()
+            try:
+                cur = conn.cursor()
+                cur.execute("SELECT id, password_hash, role FROM users WHERE username = %s", (clean_username,))
+                user_row = cur.fetchone()
+                if user_row:
+                    emp_id, hashed, emp_role = user_row
+                    if bcrypt.checkpw(clean_password.encode('utf-8'), hashed.encode('utf-8')):
+                        is_authenticated = True
+                        role = emp_role
+                        user_id = emp_id
+            finally:
+                db_pool.putconn(conn)
+        except Exception as e:
+            print("DB employee lookup error:", e)
+    
+    if is_authenticated:
         LOGIN_ATTEMPTS[client_ip] = [0, None]
         
         access_exp = datetime.now(timezone.utc) + timedelta(minutes=15)
-        access_token = jwt.encode({"sub": req.username, "scope": "all", "exp": access_exp}, JWT_SECRET, algorithm="HS256")
+        token_payload = {"sub": clean_username, "scope": "all", "role": role, "exp": access_exp}
+        if user_id:
+            token_payload["user_id"] = user_id
+            
+        access_token = jwt.encode(token_payload, JWT_SECRET, algorithm="HS256")
         
         refresh_exp = datetime.now(timezone.utc) + timedelta(days=7)
-        refresh_token = jwt.encode({"sub": req.username, "scope": "all", "exp": refresh_exp, "type": "refresh"}, JWT_SECRET, algorithm="HS256")
+        refresh_payload = {"sub": clean_username, "scope": "all", "role": role, "exp": refresh_exp, "type": "refresh"}
+        if user_id:
+            refresh_payload["user_id"] = user_id
+            
+        refresh_token = jwt.encode(refresh_payload, JWT_SECRET, algorithm="HS256")
         
         response.set_cookie(
             key="refresh_token", 
@@ -382,10 +493,25 @@ def api_login(req: LoginRequest, request: Request, response: Response):
         LOGIN_ATTEMPTS[client_ip][0] += 1
         if LOGIN_ATTEMPTS[client_ip][0] >= MAX_ATTEMPTS:
             LOGIN_ATTEMPTS[client_ip][1] = now + LOCKOUT_TIME
-        raise HTTPException(status_code=401, detail="Incorrect email or password")
+            return JSONResponse(
+                status_code=429,
+                content={
+                    "detail": "Maximum attempts exceeded. Lockout active.",
+                    "remaining_seconds": LOCKOUT_TIME
+                },
+                headers={"Retry-After": str(LOCKOUT_TIME), "X-Lockout-Remaining": str(LOCKOUT_TIME)}
+            )
+        remaining_attempts = MAX_ATTEMPTS - LOGIN_ATTEMPTS[client_ip][0]
+        return JSONResponse(
+            status_code=401,
+            content={
+                "detail": f"Incorrect email or password. {remaining_attempts} attempt{'s' if remaining_attempts != 1 else ''} remaining.",
+                "remaining_attempts": remaining_attempts
+            }
+        )
 
 @app.post("/api/refresh")
-@limiter.limit("5/minute")
+@limiter.limit("60/minute")
 def api_refresh(request: Request, response: Response):
     refresh_token = request.cookies.get("refresh_token")
     if not refresh_token:
@@ -397,7 +523,16 @@ def api_refresh(request: Request, response: Response):
             raise HTTPException(status_code=401, detail="Invalid token type")
             
         access_exp = datetime.now(timezone.utc) + timedelta(minutes=15)
-        access_token = jwt.encode({"sub": payload["sub"], "scope": payload.get("scope", "all"), "exp": access_exp}, JWT_SECRET, algorithm="HS256")
+        new_payload = {
+            "sub": payload["sub"], 
+            "scope": payload.get("scope", "all"), 
+            "role": payload.get("role", "EMPLOYEE"),
+            "exp": access_exp
+        }
+        if "user_id" in payload:
+            new_payload["user_id"] = payload["user_id"]
+            
+        access_token = jwt.encode(new_payload, JWT_SECRET, algorithm="HS256")
         
         return {"token": access_token}
     except jwt.ExpiredSignatureError:
@@ -415,7 +550,7 @@ def api_logout(response: Response):
 # --- Configuration API ---
 
 @app.get("/api/config")
-def api_get_config(username: str = Depends(verify_credentials)):
+def api_get_config(username: str = Depends(verify_admin)):
     return sheets_handler.get_all_config()
 
 class ConfigUpdate(BaseModel):
@@ -423,7 +558,7 @@ class ConfigUpdate(BaseModel):
     value: str
 
 @app.post("/api/config")
-def api_update_config(update: ConfigUpdate, username: str = Depends(verify_credentials)):
+def api_update_config(update: ConfigUpdate, username: str = Depends(verify_admin)):
     success = sheets_handler.update_config(update.key, update.value)
     if not success:
         raise HTTPException(status_code=500, detail="Failed to update configuration")
@@ -433,7 +568,7 @@ class TestMessage(BaseModel):
     user_text: str
 
 @app.post("/api/test-ai")
-def api_test_ai(message: TestMessage, username: str = Depends(verify_credentials)):
+def api_test_ai(message: TestMessage, username: str = Depends(verify_admin)):
     inventory = sheets_handler.get_all_inventory()
     config = sheets_handler.get_all_config()
     try:
@@ -443,7 +578,7 @@ def api_test_ai(message: TestMessage, username: str = Depends(verify_credentials
         raise HTTPException(status_code=500, detail=str(e))
 
 @app.get("/api/groq-status")
-def api_groq_status(username: str = Depends(verify_credentials)):
+def api_groq_status(username: str = Depends(verify_admin)):
     if not ai_client:
         return {"status": "error", "message": "Groq client not initialized"}
     try:
@@ -469,7 +604,7 @@ def api_groq_status(username: str = Depends(verify_credentials)):
         return {"status": "error", "message": str(e)}
 
 @app.get("/api/orders")
-def api_get_orders(username: str = Depends(verify_credentials)):
+def api_get_orders(username: str = Depends(verify_admin)):
     orders = sheets_handler.get_all_orders()
     return {"status": "success", "orders": orders}
 
@@ -478,7 +613,7 @@ class ReplyMessage(BaseModel):
     message: str
 
 @app.post("/api/orders/reply")
-async def api_reply_order(reply: ReplyMessage, username: str = Depends(verify_credentials)):
+async def api_reply_order(reply: ReplyMessage, username: str = Depends(verify_admin)):
     try:
         # Defaulting to instance name "Mosop" for manual dashboard replies
         await send_whatsapp_message("Mosop", reply.phone, reply.message)
@@ -487,6 +622,47 @@ async def api_reply_order(reply: ReplyMessage, username: str = Depends(verify_cr
         raise HTTPException(status_code=500, detail=str(e))
 
 import psutil
+
+@app.get("/api/metrics")
+def get_metrics(username: str = Depends(verify_admin)):
+    try:
+        # Get uptime
+        uptime_seconds = time.time() - psutil.boot_time()
+        
+        # Get CPU/Mem
+        cpu_percent = psutil.cpu_percent(interval=0.1)
+        memory_percent = psutil.virtual_memory().percent
+        
+        # Get DB size
+        conn = db_pool.getconn()
+        try:
+            cur = conn.cursor()
+            cur.execute("SELECT pg_database_size('evolution');")
+            db_size_bytes = cur.fetchone()[0]
+            cur.close()
+        finally:
+            db_pool.putconn(conn)
+        
+        db_size_mb = db_size_bytes / (1024 * 1024)
+        
+        # Cloud pricing estimation
+        base_compute_cost = 15.00
+        estimated_db_cost = (db_size_mb / 1024) * 0.10
+        total_cost = base_compute_cost + estimated_db_cost
+        
+        return {
+            "status": "success",
+            "metrics": {
+                "uptime_seconds": uptime_seconds,
+                "cpu_percent": cpu_percent,
+                "memory_percent": memory_percent,
+                "db_size_mb": db_size_mb,
+                "estimated_db_cost": estimated_db_cost,
+                "estimated_total_cost": total_cost
+            }
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
 
 @app.get("/api/inventory")
 def api_get_inventory(
@@ -705,7 +881,7 @@ def api_get_inventory_movement(
 
 
 @app.get("/api/system-metrics")
-def api_system_metrics(username: str = Depends(verify_credentials)):
+def api_system_metrics(username: str = Depends(verify_manager_or_admin)):
     cpu = psutil.cpu_percent(interval=0.1)
     memory = psutil.virtual_memory()
     return {
@@ -974,7 +1150,7 @@ def api_get_debt(page: int = Query(1, ge=1), page_size: int = Query(50, ge=1, le
         total_debtors = cur.fetchone()[0]
         
         cur.execute("""
-            SELECT customer_id, account_number, customer_name, outstanding_debt, credit_limit, phone_number, last_updated_rms
+            SELECT customer_id, account_number, customer_name, outstanding_debt, credit_limit, phone_number, last_updated_rms, last_payment_date, recent_orders
             FROM customer_debt
             WHERE outstanding_debt > 0
             ORDER BY outstanding_debt DESC
@@ -988,7 +1164,9 @@ def api_get_debt(page: int = Query(1, ge=1), page_size: int = Query(50, ge=1, le
             "outstanding_debt": float(row[3] or 0),
             "credit_limit": float(row[4] or 0),
             "phone_number": row[5],
-            "last_updated": str(row[6]) if row[6] else None
+            "last_updated": str(row[6]) if row[6] else None,
+            "last_payment_date": str(row[7]) if len(row) > 7 and row[7] else None,
+            "recent_orders": row[8] if len(row) > 8 and row[8] else None
         } for row in cur.fetchall()]
         
         cur.execute("SELECT SUM(outstanding_debt) FROM customer_debt WHERE outstanding_debt > 0")
@@ -1048,6 +1226,1113 @@ def api_get_inventory_prices(page: int = Query(1, ge=1), page_size: int = Query(
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
+# ==========================================
+# STAFF MANAGEMENT API
+# ==========================================
+class UserCreate(BaseModel):
+    username: str
+    password: str
+    role: str = "EMPLOYEE"
+
+@app.post("/api/users")
+def create_user(user: UserCreate, token_data: dict = Depends(verify_manager_or_admin)):
+    requester_role = token_data.get("role")
+    if requester_role == "MANAGER" and user.role in ["ADMIN", "MANAGER"]:
+        raise HTTPException(status_code=403, detail="Managers can only create EMPLOYEE accounts.")
+    conn = db_pool.getconn()
+    try:
+        cur = conn.cursor()
+        clean_user = user.username.strip()
+        clean_pass = user.password.strip()
+        hashed = bcrypt.hashpw(clean_pass.encode('utf-8'), bcrypt.gensalt()).decode('utf-8')
+        cur.execute(
+            "INSERT INTO users (username, password_hash, role) VALUES (%s, %s, %s) RETURNING id",
+            (clean_user, hashed, user.role)
+        )
+        new_id = cur.fetchone()[0]
+        conn.commit()
+        return {"status": "success", "user_id": new_id}
+    except Exception as e:
+        conn.rollback()
+        raise HTTPException(status_code=400, detail=str(e))
+    finally:
+        db_pool.putconn(conn)
+
+@app.get("/api/users")
+def get_users(token_data: dict = Depends(verify_manager_or_admin)):
+    conn = db_pool.getconn()
+    try:
+        cur = conn.cursor()
+        cur.execute("SELECT id, username, role, created_at FROM users")
+        rows = cur.fetchall()
+        return [{"id": r[0], "username": r[1], "role": r[2], "created_at": r[3]} for r in rows]
+    finally:
+        db_pool.putconn(conn)
+
+@app.delete("/api/users/{user_id}")
+def delete_user(user_id: int, token_data: dict = Depends(verify_admin)):
+    conn = db_pool.getconn()
+    try:
+        cur = conn.cursor()
+        cur.execute("DELETE FROM users WHERE id = %s", (user_id,))
+        conn.commit()
+        return {"status": "success"}
+    finally:
+        db_pool.putconn(conn)
+
+
+# ==========================================
+# STOCKTAKE MVP API
+# ==========================================
+
+def build_session_stocktake_data(cur, session_id: int):
+    """Helper to fetch, aggregate, and reconcile stocktake counts with live inventory and sales."""
+    cur.execute(
+        """
+        SELECT store_id, created_at, closed_at, COALESCE(allow_live_sales, FALSE), COALESCE(name, 'Stocktake')
+        FROM inventory_sessions 
+        WHERE session_id = %s
+        """, 
+        (session_id,)
+    )
+    s_row = cur.fetchone()
+    if not s_row:
+        return None, []
+        
+    store_id, created_at, closed_at, allow_live_sales, session_name = s_row
+    end_time = closed_at or datetime.now(timezone.utc)
+
+    # Fetch all count entries for this session
+    cur.execute(
+        """
+        SELECT 
+            ic.count_id,
+            ic.sku,
+            ic.quantity,
+            COALESCE(ic.condition, 'GOOD') as condition,
+            COALESCE(ic.counted_at, CURRENT_TIMESTAMP) as counted_at,
+            COALESCE(u.username, 'Staff') as username
+        FROM inventory_counts ic
+        LEFT JOIN users u ON ic.user_id = u.id
+        WHERE ic.session_id = %s
+        ORDER BY ic.sku, ic.counted_at ASC
+        """,
+        (session_id,)
+    )
+    count_rows = cur.fetchall()
+    
+    session_info = {
+        "session_id": session_id,
+        "name": session_name,
+        "store_id": store_id,
+        "allow_live_sales": bool(allow_live_sales),
+        "created_at": created_at.isoformat() if hasattr(created_at, 'isoformat') else str(created_at),
+        "closed_at": closed_at.isoformat() if closed_at and hasattr(closed_at, 'isoformat') else (str(closed_at) if closed_at else None)
+    }
+
+    if not count_rows:
+        return session_info, []
+
+    distinct_skus = list(set(r[1] for r in count_rows))
+
+    # Fetch product details from live_inventory for this store
+    cur.execute(
+        """
+        SELECT 
+            sku,
+            COALESCE(description, sku) as description,
+            COALESCE(category, 'Uncategorized') as category,
+            COALESCE(stock_quantity, 0) as expected_stock,
+            COALESCE(unit_cost, 0) as unit_cost,
+            COALESCE(retail_price, 0) as retail_price,
+            COALESCE(supplier, 'Unknown') as supplier
+        FROM live_inventory
+        WHERE store_id = %s AND sku = ANY(%s)
+        """,
+        (store_id, distinct_skus)
+    )
+    inv_rows = {r[0]: r for r in cur.fetchall()}
+
+    # If allow_live_sales is True, fetch sales between session start and end/now
+    sales_map = {}
+    if allow_live_sales and created_at:
+        try:
+            cur.execute(
+                """
+                SELECT sku, SUM(quantity) as total_sold
+                FROM sales_analytics
+                WHERE store_id = %s AND transaction_time >= %s AND transaction_time <= %s AND sku = ANY(%s)
+                GROUP BY sku
+                """,
+                (store_id, created_at, end_time, distinct_skus)
+            )
+            for r in cur.fetchall():
+                sales_map[r[0]] = float(r[1] or 0)
+        except Exception as e:
+            print("Sales analytics lookup note (reconciling with 0 sales):", e)
+
+    # Aggregate by SKU
+    sku_groups = {}
+    for r in count_rows:
+        cid, sku, qty, cond, tstamp, uname = r
+        qty_flt = float(qty or 0)
+        cond_clean = (cond or 'GOOD').strip().upper()
+        if cond_clean not in ['GOOD', 'DAMAGED', 'EXPIRED']:
+            cond_clean = 'GOOD'
+
+        if sku not in sku_groups:
+            inv_info = inv_rows.get(sku)
+            desc = inv_info[1] if inv_info else sku
+            cat = inv_info[2] if inv_info else "Uncategorized"
+            exp_stock = float(inv_info[3]) if inv_info else 0.0
+            ucost = float(inv_info[4]) if inv_info else 0.0
+            rprice = float(inv_info[5]) if inv_info else 0.0
+            supplier = inv_info[6] if inv_info and len(inv_info) > 6 else "Unknown"
+            sold_qty = sales_map.get(sku, 0.0)
+
+            sku_groups[sku] = {
+                "item_lookup_code": sku,
+                "sku": sku,
+                "description": desc,
+                "category": cat,
+                "supplier": supplier,
+                "expected_stock": exp_stock,
+                "cumulative_quantity": 0.0,
+                "quantity": 0.0,
+                "good_quantity": 0.0,
+                "damaged_quantity": 0.0,
+                "expired_quantity": 0.0,
+                "sales_during_session": sold_qty,
+                "reconciled_quantity": 0.0,
+                "discrepancy": 0.0,
+                "unit_cost": ucost,
+                "retail_price": rprice,
+                "contributors": []
+            }
+
+        grp = sku_groups[sku]
+        grp["cumulative_quantity"] += qty_flt
+        if cond_clean == 'DAMAGED':
+            grp["damaged_quantity"] += qty_flt
+        elif cond_clean == 'EXPIRED':
+            grp["expired_quantity"] += qty_flt
+        else:
+            grp["good_quantity"] += qty_flt
+
+        t_str = tstamp.strftime('%Y-%m-%d %H:%M:%S') if hasattr(tstamp, 'strftime') else str(tstamp)
+        grp["contributors".strip()].append({
+            "username": uname,
+            "quantity": qty_flt,
+            "condition": cond_clean,
+            "counted_at": t_str
+        })
+
+    items = list(sku_groups.values())
+    for item in items:
+        if allow_live_sales:
+            item["reconciled_quantity"] = round(item["cumulative_quantity"] + item["sales_during_session"], 2)
+        else:
+            item["reconciled_quantity"] = round(item["cumulative_quantity"], 2)
+        item["discrepancy"] = round(item["reconciled_quantity"] - item["expected_stock"], 2)
+        item["cumulative_quantity"] = round(item["cumulative_quantity"], 2)
+        item["quantity"] = item["cumulative_quantity"]
+        item["good_quantity"] = round(item["good_quantity"], 2)
+        item["damaged_quantity"] = round(item["damaged_quantity"], 2)
+        item["expired_quantity"] = round(item["expired_quantity"], 2)
+
+    return session_info, items
+
+
+STORE_NAMES_MAP = {1: "Main", 2: "Shop", 3: "Nandi Hills"}
+
+@app.get("/api/items/search")
+def search_items(q: str = "", store_id: Optional[str] = None, token_data: dict = Depends(verify_credentials)):
+    if not db_pool:
+        return []
+
+    clean_q = (q or "").strip()
+    conn = db_pool.getconn()
+    try:
+        cur = conn.cursor()
+        scope = token_data.get("scope", "all")
+        cur.execute("SET LOCAL app.store_id = %s", (scope,))
+
+        parsed_store_id: Optional[int] = None
+        if store_id and store_id != "all":
+            try:
+                parsed_store_id = int(store_id)
+            except ValueError:
+                parsed_store_id = None
+        elif store_id is None:
+            # If not specified, check if there is an active OPEN session
+            cur.execute("SELECT store_id FROM inventory_sessions WHERE status = 'OPEN' ORDER BY created_at DESC LIMIT 1")
+            session_row = cur.fetchone()
+            if session_row and session_row[0]:
+                parsed_store_id = session_row[0]
+
+        tokens = [t for t in clean_q.split() if t]
+        conditions = []
+        params = []
+        for t in tokens:
+            like_token = f"%{t}%"
+            conditions.append("(sku ILIKE %s OR description ILIKE %s)")
+            params.extend([like_token, like_token])
+
+        where_sql = ("WHERE " + " AND ".join(conditions)) if conditions else ""
+        prefix_term = f"{clean_q}%" if clean_q else "%"
+
+        if parsed_store_id:
+            query = f"""
+                SELECT 
+                    sku, 
+                    MAX(description) as description, 
+                    MAX(category) as category, 
+                    SUM(CASE WHEN store_id = %s THEN COALESCE(stock_quantity, 0) ELSE 0 END) as store_stock,
+                    MAX(COALESCE(retail_price, 0)) as retail_price, 
+                    MAX(COALESCE(supplier, 'Unknown')) as supplier,
+                    SUM(COALESCE(stock_quantity, 0)) as total_stock,
+                    json_agg(
+                        json_build_object(
+                            'store_id', store_id,
+                            'stock_quantity', COALESCE(stock_quantity, 0)
+                        ) ORDER BY store_id
+                    ) as store_breakdown
+                FROM live_inventory
+                {where_sql}
+                GROUP BY sku
+                ORDER BY 
+                    (CASE WHEN sku ILIKE %s THEN 0 ELSE 1 END),
+                    MAX(description) ASC
+                LIMIT 40
+            """
+            cur.execute(query, tuple([parsed_store_id] + params + [prefix_term]))
+        else:
+            query = f"""
+                SELECT 
+                    sku, 
+                    MAX(description) as description, 
+                    MAX(category) as category, 
+                    SUM(COALESCE(stock_quantity, 0)) as store_stock,
+                    MAX(COALESCE(retail_price, 0)) as retail_price, 
+                    MAX(COALESCE(supplier, 'Unknown')) as supplier,
+                    SUM(COALESCE(stock_quantity, 0)) as total_stock,
+                    json_agg(
+                        json_build_object(
+                            'store_id', store_id,
+                            'stock_quantity', COALESCE(stock_quantity, 0)
+                        ) ORDER BY store_id
+                    ) as store_breakdown
+                FROM live_inventory
+                {where_sql}
+                GROUP BY sku
+                ORDER BY 
+                    (CASE WHEN sku ILIKE %s THEN 0 ELSE 1 END),
+                    MAX(description) ASC
+                LIMIT 40
+            """
+            cur.execute(query, tuple(params + [prefix_term]))
+
+        rows = cur.fetchall()
+        results = []
+        for r in rows:
+            raw_breakdown = r[7] or []
+            formatted_breakdown = []
+            for b in raw_breakdown:
+                s_id = b.get("store_id")
+                formatted_breakdown.append({
+                    "store_id": s_id,
+                    "store_name": STORE_NAMES_MAP.get(s_id, f"Store #{s_id}"),
+                    "stock_quantity": float(b.get("stock_quantity", 0))
+                })
+
+            results.append({
+                "item_lookup_code": r[0],
+                "sku": r[0],
+                "description": r[1] or r[0],
+                "category": r[2] or "General",
+                "stock_quantity": float(r[3]),
+                "retail_price": float(r[4]),
+                "supplier": r[5] or "Unknown",
+                "total_stock": float(r[6]),
+                "store_breakdown": formatted_breakdown
+            })
+        return results
+    except Exception as e:
+        print("Error in search_items:", e)
+        return []
+    finally:
+        db_pool.putconn(conn)
+
+
+class CountSubmit(BaseModel):
+    session_id: int
+    item_lookup_code: str
+    quantity: float
+    condition: str = 'GOOD'
+
+@app.post("/api/counts")
+def submit_count(count_data: CountSubmit, token_data: dict = Depends(verify_credentials)):
+    if not db_pool:
+        raise HTTPException(status_code=503, detail="Database connection unavailable")
+    conn = db_pool.getconn()
+    try:
+        cur = conn.cursor()
+        # Find the currently OPEN session
+        cur.execute("SELECT session_id FROM inventory_sessions WHERE status = 'OPEN' ORDER BY created_at DESC LIMIT 1")
+        session_row = cur.fetchone()
+        if not session_row:
+            raise HTTPException(status_code=400, detail="No active stocktake session exists.")
+            
+        active_session_id = session_row[0]
+        
+        user_id = token_data.get("user_id")
+        if user_id is None:
+            raise HTTPException(status_code=400, detail="Admin accounts cannot perform counts. Please log in with a Staff account.")
+        
+        # Ensure user is in session_participants
+        cur.execute(
+            "SELECT 1 FROM session_participants WHERE session_id = %s AND user_id = %s",
+            (active_session_id, user_id)
+        )
+        if not cur.fetchone():
+            raise HTTPException(status_code=403, detail="You are not assigned to this stocktake session.")
+        
+        cond_clean = (count_data.condition or 'GOOD').strip().upper()
+        if cond_clean not in ['GOOD', 'DAMAGED', 'EXPIRED']:
+            cond_clean = 'GOOD'
+
+        cur.execute(
+            "INSERT INTO inventory_counts (session_id, sku, quantity, user_id, condition) VALUES (%s, %s, %s, %s, %s) RETURNING count_id",
+            (active_session_id, count_data.item_lookup_code, count_data.quantity, user_id, cond_clean)
+        )
+        new_id = cur.fetchone()[0]
+        conn.commit()
+        return {"status": "success", "count_id": new_id}
+    except HTTPException:
+        conn.rollback()
+        raise
+    except Exception as e:
+        conn.rollback()
+        raise HTTPException(status_code=500, detail=str(e))
+    finally:
+        db_pool.putconn(conn)
+
+
+@app.get("/api/sessions/current/export-rms")
+def export_rms_csv(token_data: dict = Depends(verify_manager_or_admin)):
+    import io
+    import csv
+    if not db_pool:
+        raise HTTPException(status_code=503, detail="Database connection unavailable")
+    conn = db_pool.getconn()
+    try:
+        cur = conn.cursor()
+        cur.execute("SELECT session_id FROM inventory_sessions WHERE status = 'OPEN' ORDER BY created_at DESC LIMIT 1")
+        session_row = cur.fetchone()
+        if not session_row:
+            raise HTTPException(status_code=400, detail="No active session to export.")
+            
+        session_id = session_row[0]
+        session_info, items = build_session_stocktake_data(cur, session_id)
+        if not items:
+            raise HTTPException(status_code=404, detail="No counts found for this session.")
+            
+        output = io.StringIO()
+        writer = csv.writer(output)
+        writer.writerow(["ItemLookupCode", "Quantity"])
+        for item in items:
+            qty = item["reconciled_quantity"]
+            qty_val = int(qty) if isinstance(qty, (int, float)) and float(qty).is_integer() else qty
+            writer.writerow([item["item_lookup_code"], qty_val])
+            
+        output.seek(0)
+        from fastapi.responses import Response
+        return Response(
+            content=output.getvalue(), 
+            media_type="text/csv", 
+            headers={"Content-Disposition": f"attachment; filename=rms_import_session_{session_id}.csv"}
+        )
+    finally:
+        db_pool.putconn(conn)
+
+
+@app.get("/api/sessions/current/export-audit-report")
+def export_audit_report_csv(token_data: dict = Depends(verify_manager_or_admin)):
+    import io
+    import csv
+    if not db_pool:
+        raise HTTPException(status_code=503, detail="Database connection unavailable")
+    conn = db_pool.getconn()
+    try:
+        cur = conn.cursor()
+        cur.execute("SELECT session_id FROM inventory_sessions WHERE status = 'OPEN' ORDER BY created_at DESC LIMIT 1")
+        session_row = cur.fetchone()
+        if not session_row:
+            raise HTTPException(status_code=400, detail="No active session to export.")
+            
+        session_id = session_row[0]
+        session_info, items = build_session_stocktake_data(cur, session_id)
+        if not items:
+            raise HTTPException(status_code=404, detail="No counts found for this session.")
+            
+        output = io.StringIO()
+        writer = csv.writer(output)
+        writer.writerow([
+            "ItemLookupCode", "Description", "Department", "Supplier", "ExpectedStock", 
+            "PhysicalCount", "GoodQuantity", "DamagedQuantity", "ExpiredQuantity", 
+            "SalesDuringStocktake", "ReconciledQuantity", "DiscrepancyUnits", 
+            "UnitCost", "RetailPrice", "TotalCountedValue", "DamagedLossValue", 
+            "ExpiredLossValue", "TotalWasteLossValue", "DiscrepancyValue"
+        ])
+        for item in items:
+            p_count = item["cumulative_quantity"]
+            dmg_qty = item["damaged_quantity"]
+            exp_qty = item["expired_quantity"]
+            ucost = item["unit_cost"]
+            disc_units = item["discrepancy"]
+            writer.writerow([
+                item["item_lookup_code"],
+                item["description"],
+                item["category"],
+                item.get("supplier", "Unknown"),
+                item["expected_stock"],
+                p_count,
+                item["good_quantity"],
+                dmg_qty,
+                exp_qty,
+                item["sales_during_session"],
+                item["reconciled_quantity"],
+                disc_units,
+                item["unit_cost"],
+                item["retail_price"],
+                round(p_count * ucost, 2),
+                round(dmg_qty * ucost, 2),
+                round(exp_qty * ucost, 2),
+                round((dmg_qty + exp_qty) * ucost, 2),
+                round(disc_units * ucost, 2)
+            ])
+            
+        output.seek(0)
+        from fastapi.responses import Response
+        return Response(
+            content=output.getvalue(), 
+            media_type="text/csv", 
+            headers={"Content-Disposition": f"attachment; filename=audit_report_session_{session_id}.csv"}
+        )
+    finally:
+        db_pool.putconn(conn)
+
+
+@app.get("/api/sessions/history/{session_id}/export-rms")
+def export_history_rms_csv(session_id: int, token_data: dict = Depends(verify_manager_or_admin)):
+    import io
+    import csv
+    if not db_pool:
+        raise HTTPException(status_code=503, detail="Database connection unavailable")
+    conn = db_pool.getconn()
+    try:
+        cur = conn.cursor()
+        session_info, items = build_session_stocktake_data(cur, session_id)
+        if not items:
+            raise HTTPException(status_code=404, detail="No counts found for this session.")
+            
+        output = io.StringIO()
+        writer = csv.writer(output)
+        writer.writerow(["ItemLookupCode", "Quantity"])
+        for item in items:
+            qty = item["reconciled_quantity"]
+            qty_val = int(qty) if isinstance(qty, (int, float)) and float(qty).is_integer() else qty
+            writer.writerow([item["item_lookup_code"], qty_val])
+            
+        output.seek(0)
+        from fastapi.responses import Response
+        return Response(
+            content=output.getvalue(), 
+            media_type="text/csv", 
+            headers={"Content-Disposition": f"attachment; filename=rms_import_session_{session_id}.csv"}
+        )
+    finally:
+        db_pool.putconn(conn)
+
+
+@app.get("/api/sessions/history/{session_id}/export-audit-report")
+def export_history_audit_report_csv(session_id: int, token_data: dict = Depends(verify_manager_or_admin)):
+    import io
+    import csv
+    if not db_pool:
+        raise HTTPException(status_code=503, detail="Database connection unavailable")
+    conn = db_pool.getconn()
+    try:
+        cur = conn.cursor()
+        session_info, items = build_session_stocktake_data(cur, session_id)
+        if not items:
+            raise HTTPException(status_code=404, detail="No counts found for this session.")
+            
+        output = io.StringIO()
+        writer = csv.writer(output)
+        writer.writerow([
+            "ItemLookupCode", "Description", "Department", "Supplier", "ExpectedStock", 
+            "PhysicalCount", "GoodQuantity", "DamagedQuantity", "ExpiredQuantity", 
+            "SalesDuringStocktake", "ReconciledQuantity", "DiscrepancyUnits", 
+            "UnitCost", "RetailPrice", "TotalCountedValue", "DamagedLossValue", 
+            "ExpiredLossValue", "TotalWasteLossValue", "DiscrepancyValue"
+        ])
+        for item in items:
+            p_count = item["cumulative_quantity"]
+            dmg_qty = item["damaged_quantity"]
+            exp_qty = item["expired_quantity"]
+            ucost = item["unit_cost"]
+            disc_units = item["discrepancy"]
+            writer.writerow([
+                item["item_lookup_code"],
+                item["description"],
+                item["category"],
+                item.get("supplier", "Unknown"),
+                item["expected_stock"],
+                p_count,
+                item["good_quantity"],
+                dmg_qty,
+                exp_qty,
+                item["sales_during_session"],
+                item["reconciled_quantity"],
+                disc_units,
+                item["unit_cost"],
+                item["retail_price"],
+                round(p_count * ucost, 2),
+                round(dmg_qty * ucost, 2),
+                round(exp_qty * ucost, 2),
+                round((dmg_qty + exp_qty) * ucost, 2),
+                round(disc_units * ucost, 2)
+            ])
+            
+        output.seek(0)
+        from fastapi.responses import Response
+        return Response(
+            content=output.getvalue(), 
+            media_type="text/csv", 
+            headers={"Content-Disposition": f"attachment; filename=audit_report_session_{session_id}.csv"}
+        )
+    finally:
+        db_pool.putconn(conn)
+
+
+@app.get("/api/sessions/history/{session_id}/counts")
+def get_session_counts_by_id(session_id: int, token_data: dict = Depends(verify_manager_or_admin)):
+    if not db_pool:
+        raise HTTPException(status_code=503, detail="Database connection unavailable")
+    conn = db_pool.getconn()
+    try:
+        cur = conn.cursor()
+        session_info, items = build_session_stocktake_data(cur, session_id)
+        if not session_info:
+            raise HTTPException(status_code=404, detail="Session not found")
+        return items
+    finally:
+        db_pool.putconn(conn)
+
+
+@app.get("/api/sessions/history/{session_id}/valuation-report")
+def get_session_valuation_report(session_id: int, token_data: dict = Depends(verify_manager_or_admin)):
+    if not db_pool:
+        raise HTTPException(status_code=503, detail="Database connection unavailable")
+    conn = db_pool.getconn()
+    try:
+        cur = conn.cursor()
+        session_info, items = build_session_stocktake_data(cur, session_id)
+        if not session_info:
+            raise HTTPException(status_code=404, detail="Session not found")
+            
+        total_expected_value = sum(i["expected_stock"] * i["unit_cost"] for i in items)
+        total_counted_value = sum(i["cumulative_quantity"] * i["unit_cost"] for i in items)
+        total_damaged_value = sum(i["damaged_quantity"] * i["unit_cost"] for i in items)
+        total_expired_value = sum(i["expired_quantity"] * i["unit_cost"] for i in items)
+        total_waste_value = total_damaged_value + total_expired_value
+        total_waste_retail = sum((i["damaged_quantity"] + i["expired_quantity"]) * i["retail_price"] for i in items)
+        total_discrepancy_value = sum(i["discrepancy"] * i["unit_cost"] for i in items)
+        
+        damaged_items = [
+            {
+                "sku": i["sku"],
+                "item_lookup_code": i["sku"],
+                "description": i["description"],
+                "category": i["category"],
+                "supplier": i.get("supplier", "Unknown"),
+                "damaged_quantity": i["damaged_quantity"],
+                "unit_cost": i["unit_cost"],
+                "retail_price": i["retail_price"],
+                "loss_value": round(i["damaged_quantity"] * i["unit_cost"], 2),
+                "contributors": [c for c in i["contributors"] if c["condition"] == 'DAMAGED']
+            }
+            for i in items if i["damaged_quantity"] > 0
+        ]
+        
+        expired_items = [
+            {
+                "sku": i["sku"],
+                "item_lookup_code": i["sku"],
+                "description": i["description"],
+                "category": i["category"],
+                "supplier": i.get("supplier", "Unknown"),
+                "expired_quantity": i["expired_quantity"],
+                "unit_cost": i["unit_cost"],
+                "retail_price": i["retail_price"],
+                "loss_value": round(i["expired_quantity"] * i["unit_cost"], 2),
+                "contributors": [c for c in i["contributors"] if c["condition"] == 'EXPIRED']
+            }
+            for i in items if i["expired_quantity"] > 0
+        ]
+
+        discrepancy_items = [
+            {
+                "sku": i["sku"],
+                "item_lookup_code": i["sku"],
+                "description": i["description"],
+                "category": i["category"],
+                "supplier": i.get("supplier", "Unknown"),
+                "expected_stock": i["expected_stock"],
+                "reconciled_quantity": i["reconciled_quantity"],
+                "discrepancy": i["discrepancy"],
+                "unit_cost": i["unit_cost"],
+                "retail_price": i["retail_price"],
+                "discrepancy_value": round(i["discrepancy"] * i["unit_cost"], 2)
+            }
+            for i in items if abs(i["discrepancy"]) > 0.001
+        ]
+        
+        waste_pct = round((total_waste_value / total_counted_value * 100), 2) if total_counted_value > 0 else 0.0
+
+        return {
+            "session": session_info,
+            "summary": {
+                "total_products_counted": len(items),
+                "total_physical_units": round(sum(i["cumulative_quantity"] for i in items), 2),
+                "total_damaged_units": round(sum(i["damaged_quantity"] for i in items), 2),
+                "total_expired_units": round(sum(i["expired_quantity"] for i in items), 2),
+                "total_waste_units": round(sum(i["damaged_quantity"] + i["expired_quantity"] for i in items), 2),
+                "total_sales_units": round(sum(i["sales_during_session"] for i in items), 2),
+                "total_expected_value": round(total_expected_value, 2),
+                "total_counted_value": round(total_counted_value, 2),
+                "total_damaged_value": round(total_damaged_value, 2),
+                "total_expired_value": round(total_expired_value, 2),
+                "total_waste_value": round(total_waste_value, 2),
+                "total_waste_retail": round(total_waste_retail, 2),
+                "waste_percentage": waste_pct,
+                "total_discrepancy_value": round(total_discrepancy_value, 2)
+            },
+            "damaged_items": damaged_items,
+            "expired_items": expired_items,
+            "discrepancy_items": discrepancy_items
+        }
+    finally:
+        db_pool.putconn(conn)
+
+
+@app.get("/api/sessions/history/{session_id}/analysis")
+def get_session_analysis(session_id: int, token_data: dict = Depends(verify_manager_or_admin)):
+    if not db_pool:
+        raise HTTPException(status_code=503, detail="Database connection unavailable")
+    conn = db_pool.getconn()
+    try:
+        cur = conn.cursor(cursor_factory=RealDictCursor)
+        
+        # 1. Total Scanned Quantity and Count Entries
+        cur.execute("SELECT COUNT(*) as total_entries, SUM(quantity) as total_quantity FROM inventory_counts WHERE session_id = %s", (session_id,))
+        totals = cur.fetchone() or {}
+        
+        # 2. Breakdown by Condition
+        cur.execute("SELECT condition, SUM(quantity) as condition_quantity FROM inventory_counts WHERE session_id = %s GROUP BY condition", (session_id,))
+        condition_breakdown = cur.fetchall() or []
+        
+        # 3. Top 10 Items by Volume
+        cur.execute("SELECT sku, SUM(quantity) as total_quantity FROM inventory_counts WHERE session_id = %s GROUP BY sku ORDER BY total_quantity DESC LIMIT 10", (session_id,))
+        top_items = cur.fetchall() or []
+        
+        # 4. Top Employees by Scan Volume
+        cur.execute("""
+            SELECT u.username, SUM(ic.quantity) as total_quantity 
+            FROM inventory_counts ic
+            JOIN users u ON ic.user_id = u.id
+            WHERE ic.session_id = %s
+            GROUP BY u.username
+            ORDER BY total_quantity DESC
+            LIMIT 5
+        """, (session_id,))
+        top_employees = cur.fetchall() or []
+        
+        # 5. Timeline (Hourly)
+        try:
+            cur.execute("""
+                SELECT date_trunc('hour', counted_at) as scan_hour, SUM(quantity) as hourly_quantity 
+                FROM inventory_counts 
+                WHERE session_id = %s
+                GROUP BY scan_hour
+                ORDER BY scan_hour ASC
+            """, (session_id,))
+            timeline_rows = cur.fetchall() or []
+        except Exception:
+            conn.rollback()
+            timeline_rows = []
+            
+        timeline = []
+        for row in timeline_rows:
+            sh = row.get("scan_hour")
+            if sh:
+                try:
+                    hour_str = sh.strftime("%H:00")
+                except AttributeError:
+                    hour_str = str(sh).split(":")[0] + ":00" if ":" in str(sh) else str(sh)
+                
+                hq = row.get("hourly_quantity")
+                timeline.append({
+                    "hour": hour_str, 
+                    "quantity": float(hq) if hq is not None else 0.0
+                })
+        
+        return {
+            "totals": {
+                "total_entries": totals.get("total_entries") or 0,
+                "total_quantity": float(totals.get("total_quantity") or 0)
+            },
+            "condition_breakdown": [{"condition": r.get("condition"), "quantity": float(r.get("condition_quantity") or 0)} for r in condition_breakdown],
+            "top_items": [{"sku": r.get("sku"), "quantity": float(r.get("total_quantity") or 0)} for r in top_items],
+            "top_employees": [{"username": r.get("username"), "quantity": float(r.get("total_quantity") or 0)} for r in top_employees],
+            "timeline": timeline
+        }
+    except Exception as e:
+        print(f"Error in get_session_analysis: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+    finally:
+        db_pool.putconn(conn)
+        
+
+@app.get("/api/sessions")
+def get_sessions(token_data: dict = Depends(verify_manager_or_admin)):
+    if not db_pool:
+        raise HTTPException(status_code=503, detail="Database connection unavailable")
+    conn = db_pool.getconn()
+    try:
+        cur = conn.cursor()
+        cur.execute("SELECT session_id, status, created_at, created_by, name, description, store_id, closed_at, COALESCE(allow_live_sales, FALSE) FROM inventory_sessions ORDER BY created_at DESC")
+        rows = cur.fetchall()
+        return [
+            {
+                "session_id": r[0], 
+                "status": r[1], 
+                "created_at": r[2].isoformat() if hasattr(r[2], 'isoformat') else str(r[2]), 
+                "created_by": r[3], 
+                "name": r[4], 
+                "description": r[5], 
+                "store_id": r[6], 
+                "closed_at": r[7].isoformat() if r[7] and hasattr(r[7], 'isoformat') else (str(r[7]) if r[7] else None),
+                "allow_live_sales": bool(r[8])
+            } 
+            for r in rows
+        ]
+    finally:
+        db_pool.putconn(conn)
+
+@app.get("/api/stores")
+def get_stores(token_data: dict = Depends(verify_manager_or_admin)):
+    if not db_pool:
+        raise HTTPException(status_code=503, detail="Database connection unavailable")
+    conn = db_pool.getconn()
+    try:
+        cur = conn.cursor()
+        cur.execute("SELECT DISTINCT store_id FROM live_inventory ORDER BY store_id")
+        rows = cur.fetchall()
+        return [{"store_id": r[0]} for r in rows]
+    finally:
+        db_pool.putconn(conn)
+
+
+class SessionCreate(BaseModel):
+    name: str = ""
+    description: str = ""
+    store_id: int
+    employee_ids: list[int] = []
+    allow_live_sales: bool = False
+
+@app.post("/api/sessions")
+def create_session(data: SessionCreate, token_data: dict = Depends(verify_manager_or_admin)):
+    if not db_pool:
+        raise HTTPException(status_code=503, detail="Database connection unavailable")
+    conn = db_pool.getconn()
+    try:
+        cur = conn.cursor()
+        cur.execute(
+            """
+            INSERT INTO inventory_sessions (status, created_by, name, description, store_id, allow_live_sales) 
+            VALUES ('OPEN', %s, %s, %s, %s, %s) RETURNING session_id
+            """,
+            (token_data.get("user_id"), data.name, data.description, data.store_id, data.allow_live_sales)
+        )
+        session_id = cur.fetchone()[0]
+        
+        for emp_id in data.employee_ids:
+            cur.execute(
+                "INSERT INTO session_participants (session_id, user_id, status) VALUES (%s, %s, 'COUNTING') ON CONFLICT DO NOTHING",
+                (session_id, emp_id)
+            )
+        
+        conn.commit()
+        return {"status": "success", "session_id": session_id}
+    finally:
+        db_pool.putconn(conn)
+
+@app.post("/api/sessions/{session_id}/toggle-live-sales")
+def toggle_live_sales(session_id: int, token_data: dict = Depends(verify_manager_or_admin)):
+    if not db_pool:
+        raise HTTPException(status_code=503, detail="Database connection unavailable")
+    conn = db_pool.getconn()
+    try:
+        cur = conn.cursor()
+        cur.execute(
+            "UPDATE inventory_sessions SET allow_live_sales = NOT COALESCE(allow_live_sales, FALSE) WHERE session_id = %s RETURNING allow_live_sales",
+            (session_id,)
+        )
+        row = cur.fetchone()
+        if not row:
+            raise HTTPException(status_code=404, detail="Session not found")
+        conn.commit()
+        return {"status": "success", "allow_live_sales": bool(row[0])}
+    finally:
+        db_pool.putconn(conn)
+
+@app.post("/api/sessions/{session_id}/close")
+def close_session_by_id(session_id: int, token_data: dict = Depends(verify_manager_or_admin)):
+    if not db_pool:
+        raise HTTPException(status_code=503, detail="Database connection unavailable")
+    conn = db_pool.getconn()
+    try:
+        cur = conn.cursor()
+        cur.execute(
+            "UPDATE inventory_sessions SET status = 'CLOSED', closed_at = CURRENT_TIMESTAMP WHERE session_id = %s",
+            (session_id,)
+        )
+        conn.commit()
+        return {"status": "success"}
+    finally:
+        db_pool.putconn(conn)
+        
+class ParticipantAdd(BaseModel):
+    user_id: int
+
+@app.post("/api/sessions/{session_id}/participants")
+def add_participant(session_id: int, data: ParticipantAdd, token_data: dict = Depends(verify_manager_or_admin)):
+    if not db_pool:
+        raise HTTPException(status_code=503, detail="Database connection unavailable")
+    conn = db_pool.getconn()
+    try:
+        cur = conn.cursor()
+        cur.execute(
+            "INSERT INTO session_participants (session_id, user_id, status) VALUES (%s, %s, 'COUNTING') ON CONFLICT DO NOTHING",
+            (session_id, data.user_id)
+        )
+        conn.commit()
+        return {"status": "success"}
+    finally:
+        db_pool.putconn(conn)
+
+@app.get("/api/sessions/current/counts")
+def get_session_counts(token_data: dict = Depends(verify_manager_or_admin)):
+    if not db_pool:
+        raise HTTPException(status_code=503, detail="Database connection unavailable")
+    conn = db_pool.getconn()
+    try:
+        cur = conn.cursor()
+        cur.execute("SELECT session_id FROM inventory_sessions WHERE status = 'OPEN' ORDER BY created_at DESC LIMIT 1")
+        session_row = cur.fetchone()
+        if not session_row:
+            return []
+        session_id = session_row[0]
+        session_info, items = build_session_stocktake_data(cur, session_id)
+        return items
+    finally:
+        db_pool.putconn(conn)
+
+@app.get("/api/counts/my")
+def get_my_counts(token_data: dict = Depends(verify_credentials)):
+    if not db_pool:
+        raise HTTPException(status_code=503, detail="Database connection unavailable")
+    conn = db_pool.getconn()
+    try:
+        cur = conn.cursor()
+        cur.execute("SELECT session_id, store_id FROM inventory_sessions WHERE status = 'OPEN' ORDER BY created_at DESC LIMIT 1")
+        session_row = cur.fetchone()
+        if not session_row:
+            return []
+            
+        session_id, store_id = session_row[0], session_row[1]
+
+        cur.execute("""
+            SELECT i.sku, COALESCE(li.description, 'Unknown Item'), i.total_quantity, i.condition 
+            FROM (
+                SELECT sku, condition, SUM(quantity) as total_quantity 
+                FROM inventory_counts 
+                WHERE session_id = %s AND user_id = %s 
+                GROUP BY sku, condition
+            ) i 
+            LEFT JOIN live_inventory li ON i.sku = li.sku AND li.store_id = %s 
+            ORDER BY li.description
+        """, (session_id, token_data.get("user_id"), store_id))
+        rows = cur.fetchall()
+        return [{"item_lookup_code": r[0], "description": r[1], "total_quantity": float(r[2]), "condition": r[3]} for r in rows]
+    finally:
+        db_pool.putconn(conn)
+
+@app.post("/api/sessions/current/commit")
+def commit_session(token_data: dict = Depends(verify_credentials)):
+    if not db_pool:
+        raise HTTPException(status_code=503, detail="Database connection unavailable")
+    conn = db_pool.getconn()
+    try:
+        cur = conn.cursor()
+        cur.execute("SELECT session_id FROM inventory_sessions WHERE status = 'OPEN' ORDER BY created_at DESC LIMIT 1")
+        session_row = cur.fetchone()
+        if not session_row:
+            raise HTTPException(status_code=400, detail="No active session.")
+            
+        user_id = token_data.get("user_id")
+        if user_id is None:
+            raise HTTPException(status_code=400, detail="Admin accounts cannot commit sessions. Please log in with a Staff account.")
+            
+        cur.execute(
+            "INSERT INTO session_participants (session_id, user_id, status) VALUES (%s, %s, 'COMMITTED') ON CONFLICT (session_id, user_id) DO UPDATE SET status = 'COMMITTED', updated_at = CURRENT_TIMESTAMP",
+            (session_row[0], user_id)
+        )
+        conn.commit()
+        return {"status": "success"}
+    finally:
+        db_pool.putconn(conn)
+
+@app.get("/api/sessions/current/status")
+def get_session_status(token_data: dict = Depends(verify_credentials)):
+    if not db_pool:
+        raise HTTPException(status_code=503, detail="Database connection unavailable")
+    conn = db_pool.getconn()
+    try:
+        cur = conn.cursor()
+        if token_data.get("role") in ["ADMIN", "MANAGER"]:
+            cur.execute("SELECT session_id, name, description, store_id, COALESCE(allow_live_sales, FALSE) FROM inventory_sessions WHERE status = 'OPEN' ORDER BY created_at DESC LIMIT 1")
+        else:
+            cur.execute("""
+                SELECT s.session_id, s.name, s.description, s.store_id, COALESCE(s.allow_live_sales, FALSE) 
+                FROM inventory_sessions s
+                JOIN session_participants sp ON s.session_id = sp.session_id
+                WHERE s.status = 'OPEN' AND sp.user_id = %s
+                ORDER BY s.created_at DESC LIMIT 1
+            """, (token_data.get("user_id"),))
+        
+        session_row = cur.fetchone()
+        if not session_row:
+            return {"active": False, "participants": []}
+            
+        session_id, name, description, store_id, allow_live_sales = session_row[0], session_row[1], session_row[2], session_row[3], session_row[4]
+        cur.execute("""
+            SELECT u.username, sp.status, sp.updated_at
+            FROM session_participants sp
+            JOIN users u ON sp.user_id = u.id
+            WHERE sp.session_id = %s
+        """, (session_id,))
+        rows = cur.fetchall()
+        participants = [{"username": r[0], "status": r[1], "updated_at": r[2].isoformat() if r[2] else None} for r in rows]
+        return {
+            "active": True, 
+            "session_id": session_id, 
+            "name": name, 
+            "description": description, 
+            "store_id": store_id, 
+            "allow_live_sales": bool(allow_live_sales),
+            "participants": participants
+        }
+    finally:
+        db_pool.putconn(conn)
+
+
+# --- Protrack365 Fleet Tracking & WebSocket Engine ---
+class FleetConnectionManager:
+    def __init__(self):
+        self.active_connections: list[WebSocket] = []
+
+    async def connect(self, websocket: WebSocket):
+        await websocket.accept()
+        self.active_connections.append(websocket)
+
+    def disconnect(self, websocket: WebSocket):
+        if websocket in self.active_connections:
+            self.active_connections.remove(websocket)
+
+    async def broadcast(self, message: dict):
+        for connection in list(self.active_connections):
+            try:
+                await connection.send_json(message)
+            except Exception:
+                self.disconnect(connection)
+
+
+fleet_manager = FleetConnectionManager()
+fleet_broadcast_task: Optional[asyncio.Task] = None
+
+
+async def fleet_broadcaster_loop():
+    """Polls Protrack service every 10 seconds and broadcasts GeoJSON to active WebSockets."""
+    while True:
+        try:
+            geojson_data = await protrack_service.get_latest_tracking_geojson()
+            if fleet_manager.active_connections:
+                await fleet_manager.broadcast(geojson_data)
+        except Exception as e:
+            print(f"[Fleet Broadcaster] Error in loop: {e}")
+        await asyncio.sleep(10)
+
+
+@app.on_event("startup")
+async def startup_fleet_broadcaster():
+    global fleet_broadcast_task
+    fleet_broadcast_task = asyncio.create_task(fleet_broadcaster_loop())
+
+
+@app.on_event("shutdown")
+async def shutdown_fleet_broadcaster():
+    global fleet_broadcast_task
+    if fleet_broadcast_task:
+        fleet_broadcast_task.cancel()
+        try:
+            await fleet_broadcast_task
+        except asyncio.CancelledError:
+            pass
+
+
+@app.websocket("/ws/fleet")
+async def websocket_fleet_endpoint(websocket: WebSocket):
+    await fleet_manager.connect(websocket)
+    try:
+        initial_geojson = await protrack_service.get_latest_tracking_geojson()
+        await websocket.send_json(initial_geojson)
+        while True:
+            data = await websocket.receive_text()
+            if data == "ping":
+                await websocket.send_text("pong")
+    except WebSocketDisconnect:
+        fleet_manager.disconnect(websocket)
+    except Exception:
+        fleet_manager.disconnect(websocket)
+
+
+@app.get("/api/fleet/live-geojson")
+async def get_fleet_live_geojson():
+    """REST fallback for live fleet GeoJSON telemetry."""
+    return await protrack_service.get_latest_tracking_geojson()
+
+
+@app.get("/api/fleet/status")
+async def get_fleet_status():
+    """Diagnostic status for fleet service & connected WebSocket count."""
+    status_dict = protrack_service.get_status()
+    status_dict["connected_clients"] = len(fleet_manager.active_connections)
+    return status_dict
+
+
 # --- Static Frontend Serving ---
 import os
 if os.path.exists("frontend/dist"):
@@ -1070,3 +2355,5 @@ if os.path.exists("frontend/dist"):
         response.headers["Pragma"] = "no-cache"
         response.headers["Expires"] = "0"
         return response
+
+

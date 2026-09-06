@@ -1457,18 +1457,9 @@ def search_items(q: str = "", store_id: Optional[str] = None, token_data: dict =
         scope = token_data.get("scope", "all")
         cur.execute("SET LOCAL app.store_id = %s", (scope,))
 
-        parsed_store_id: Optional[int] = None
-        if store_id and store_id != "all":
-            try:
-                parsed_store_id = int(store_id)
-            except ValueError:
-                parsed_store_id = None
-        elif store_id is None:
-            # If not specified, check if there is an active OPEN session
-            cur.execute("SELECT store_id FROM inventory_sessions WHERE status = 'OPEN' ORDER BY created_at DESC LIMIT 1")
-            session_row = cur.fetchone()
-            if session_row and session_row[0]:
-                parsed_store_id = session_row[0]
+        # Check if there is an active stocktake session
+        cur.execute("SELECT id, store_id FROM inventory_sessions WHERE status = 'OPEN' ORDER BY created_at DESC LIMIT 1")
+        open_session = cur.fetchone()
 
         tokens = [t for t in clean_q.split() if t]
         conditions = []
@@ -1478,85 +1469,69 @@ def search_items(q: str = "", store_id: Optional[str] = None, token_data: dict =
             conditions.append("(sku ILIKE %s OR description ILIKE %s)")
             params.extend([like_token, like_token])
 
-        where_sql = ("WHERE " + " AND ".join(conditions)) if conditions else ""
         prefix_term = f"{clean_q}%" if clean_q else "%"
 
-        if parsed_store_id:
+        if open_session:
+            # Active stocktake session: Unbiased blind count
+            # System expected stock and prices are masked
+            session_store_id = open_session[1] or 1
+            session_where = "WHERE store_id = %s" + (f" AND {' AND '.join(conditions)}" if conditions else "")
             query = f"""
-                SELECT 
-                    sku, 
-                    MAX(description) as description, 
-                    MAX(category) as category, 
-                    SUM(CASE WHEN store_id = %s THEN COALESCE(stock_quantity, 0) ELSE 0 END) as store_stock,
-                    MAX(COALESCE(retail_price, 0)) as retail_price, 
-                    MAX(COALESCE(supplier, 'Unknown')) as supplier,
-                    SUM(COALESCE(stock_quantity, 0)) as total_stock,
-                    json_agg(
-                        json_build_object(
-                            'store_id', store_id,
-                            'stock_quantity', COALESCE(stock_quantity, 0)
-                        ) ORDER BY store_id
-                    ) as store_breakdown
+                SELECT sku, description, category, COALESCE(supplier, 'Unknown')
                 FROM live_inventory
-                {where_sql}
-                GROUP BY sku
-                ORDER BY 
-                    (CASE WHEN sku ILIKE %s THEN 0 ELSE 1 END),
-                    MAX(description) ASC
+                {session_where}
+                ORDER BY (CASE WHEN sku ILIKE %s THEN 0 ELSE 1 END), description ASC
                 LIMIT 40
             """
-            cur.execute(query, tuple([parsed_store_id] + params + [prefix_term]))
+            cur.execute(query, tuple([session_store_id] + params + [prefix_term]))
+            rows = cur.fetchall()
+            return [
+                {
+                    "item_lookup_code": r[0],
+                    "sku": r[0],
+                    "description": r[1] or r[0],
+                    "category": r[2] or "General",
+                    "supplier": r[3] or "Unknown",
+                    "stock_quantity": 0.0,
+                    "actual_stock": 0.0,
+                    "retail_price": 0.0
+                }
+                for r in rows
+            ]
         else:
+            # Daily Price & Stock Lookup mode:
+            # Only showcase actual stock from Main Store (store_id = 1)
+            target_store_id = 1
+            main_where = "WHERE store_id = %s" + (f" AND {' AND '.join(conditions)}" if conditions else "")
             query = f"""
                 SELECT 
                     sku, 
-                    MAX(description) as description, 
-                    MAX(category) as category, 
-                    SUM(COALESCE(stock_quantity, 0)) as store_stock,
-                    MAX(COALESCE(retail_price, 0)) as retail_price, 
-                    MAX(COALESCE(supplier, 'Unknown')) as supplier,
-                    SUM(COALESCE(stock_quantity, 0)) as total_stock,
-                    json_agg(
-                        json_build_object(
-                            'store_id', store_id,
-                            'stock_quantity', COALESCE(stock_quantity, 0)
-                        ) ORDER BY store_id
-                    ) as store_breakdown
+                    description, 
+                    category, 
+                    COALESCE(stock_quantity, 0) as stock_quantity, 
+                    COALESCE(retail_price, 0) as retail_price, 
+                    COALESCE(supplier, 'Unknown') as supplier
                 FROM live_inventory
-                {where_sql}
-                GROUP BY sku
-                ORDER BY 
-                    (CASE WHEN sku ILIKE %s THEN 0 ELSE 1 END),
-                    MAX(description) ASC
+                {main_where}
+                ORDER BY (CASE WHEN sku ILIKE %s THEN 0 ELSE 1 END), description ASC
                 LIMIT 40
             """
-            cur.execute(query, tuple(params + [prefix_term]))
-
-        rows = cur.fetchall()
-        results = []
-        for r in rows:
-            raw_breakdown = r[7] or []
-            formatted_breakdown = []
-            for b in raw_breakdown:
-                s_id = b.get("store_id")
-                formatted_breakdown.append({
-                    "store_id": s_id,
-                    "store_name": STORE_NAMES_MAP.get(s_id, f"Store #{s_id}"),
-                    "stock_quantity": float(b.get("stock_quantity", 0))
-                })
-
-            results.append({
-                "item_lookup_code": r[0],
-                "sku": r[0],
-                "description": r[1] or r[0],
-                "category": r[2] or "General",
-                "stock_quantity": float(r[3]),
-                "retail_price": float(r[4]),
-                "supplier": r[5] or "Unknown",
-                "total_stock": float(r[6]),
-                "store_breakdown": formatted_breakdown
-            })
-        return results
+            cur.execute(query, tuple([target_store_id] + params + [prefix_term]))
+            rows = cur.fetchall()
+            return [
+                {
+                    "item_lookup_code": r[0],
+                    "sku": r[0],
+                    "description": r[1] or r[0],
+                    "category": r[2] or "General",
+                    "stock_quantity": float(r[3]),
+                    "actual_stock": float(r[3]),
+                    "retail_price": float(r[4]),
+                    "supplier": r[5] or "Unknown",
+                    "store_name": "Main Store"
+                }
+                for r in rows
+            ]
     except Exception as e:
         print("Error in search_items:", e)
         return []

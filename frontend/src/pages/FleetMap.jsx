@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useRef, useMemo } from 'react';
+import { motion, AnimatePresence, useMotionValue, useSpring, useMotionValueEvent } from 'framer-motion';
 import L from 'leaflet';
 import 'leaflet/dist/leaflet.css';
 import { 
@@ -29,25 +30,50 @@ import {
   Sparkles,
   ExternalLink
 } from 'lucide-react';
-import api from '../api';
+import api, { getAccessToken } from '../api';
 
 const ELDORET_CENTER = [0.5143, 35.2698];
 const DEFAULT_ZOOM = 12;
 
+// --- Apple-style spring physics (critically damped, no cartoonish wobble) ---
+// Fast, light — small controls: buttons, chips, list rows.
+const springTap = { type: 'spring', stiffness: 400, damping: 25, mass: 1 };
+// Heavier — larger surfaces that should feel like they carry more weight,
+// e.g. the bottom telemetry dock sliding up like an iOS sheet.
+const springSheet = { type: 'spring', stiffness: 300, damping: 30, mass: 1 };
+
 // SVG Semi-Circular Radial Gauge Component
+// The needle and value arc are driven by real spring physics (not CSS easing)
+// so the dial settles into its new reading with a bit of weight and
+// momentum, like a physical gauge needle — rather than a linear/eased tween.
 function RadialGauge({ value, max = 100, unit = '%', label, sublabel, color = '#10B981', size = 160 }) {
   const radius = 58;
   const strokeWidth = 10;
   const cx = 80;
   const cy = 80;
-  
+
   // Semi-circle arc: from -180 deg (left) to 0 deg (right) -> 180 degree span
   const pct = Math.min(100, Math.max(0, (value / max) * 100));
   const arcLength = Math.PI * radius; // 182.2
-  const strokeDashoffset = arcLength - (arcLength * pct) / 100;
-  
+  const targetStrokeDashoffset = arcLength - (arcLength * pct) / 100;
+
   // Needle rotation: from -90 deg to +90 deg
-  const needleAngle = -90 + (pct / 100) * 180;
+  const targetNeedleAngle = -90 + (pct / 100) * 180;
+
+  // Spring-smoothed readouts: a motion value holds the live target, a spring
+  // chases it, and we mirror the settled number into state so it can be
+  // interpolated straight into the SVG's own transform/dash attributes.
+  const needleTarget = useMotionValue(targetNeedleAngle);
+  const needleSpring = useSpring(needleTarget, { stiffness: 170, damping: 22, mass: 1 });
+  const [needleAngle, setNeedleAngle] = useState(targetNeedleAngle);
+  useEffect(() => { needleTarget.set(targetNeedleAngle); }, [targetNeedleAngle, needleTarget]);
+  useMotionValueEvent(needleSpring, 'change', setNeedleAngle);
+
+  const dashTarget = useMotionValue(targetStrokeDashoffset);
+  const dashSpring = useSpring(dashTarget, { stiffness: 170, damping: 22, mass: 1 });
+  const [strokeDashoffset, setStrokeDashoffset] = useState(targetStrokeDashoffset);
+  useEffect(() => { dashTarget.set(targetStrokeDashoffset); }, [targetStrokeDashoffset, dashTarget]);
+  useMotionValueEvent(dashSpring, 'change', setStrokeDashoffset);
 
   return (
     <div className="flex flex-col items-center justify-center relative select-none">
@@ -81,11 +107,10 @@ function RadialGauge({ value, max = 100, unit = '%', label, sublabel, color = '#
           strokeDasharray={arcLength}
           strokeDashoffset={strokeDashoffset}
           strokeLinecap="round"
-          className="transition-all duration-700 ease-out"
         />
 
-        {/* Center Pivot & Needle */}
-        <g transform={`rotate(${needleAngle}, ${cx}, ${cy})`} className="transition-transform duration-700 ease-out">
+        {/* Center Pivot & Needle — spring-driven, see targetNeedleAngle above */}
+        <g transform={`rotate(${needleAngle}, ${cx}, ${cy})`}>
           <line
             x1={cx}
             y1={cy}
@@ -369,7 +394,13 @@ export default function FleetMap() {
       const host = window.location.hostname === 'localhost' && window.location.port === '5180'
         ? 'localhost:8000'
         : window.location.host;
-      const wsUrl = `${wsProtocol}//${host}/ws/fleet`;
+      const token = getAccessToken();
+      if (!token) {
+        // Not logged in (or token not loaded yet) — skip the socket and let
+        // the fallback polling interval below handle it once available.
+        return;
+      }
+      const wsUrl = `${wsProtocol}//${host}/ws/fleet?token=${encodeURIComponent(token)}`;
 
       try {
         ws = new WebSocket(wsUrl);
@@ -519,37 +550,46 @@ export default function FleetMap() {
         {/* View Mode Switcher (Inspired by reference aesthetics) */}
         <div className="flex items-center gap-2">
           <div className="flex bg-stone-950 p-1 rounded-sm border border-stone-800">
-            <button
+            <motion.button
+              whileTap={{ scale: 0.95 }}
+              transition={springTap}
               onClick={() => setActiveTab('COMMAND')}
-              className={`flex items-center gap-1.5 px-3 py-1.5 text-[10px] font-black uppercase tracking-wider rounded-sm transition-all ${
+              className={`flex items-center gap-1.5 px-3 py-1.5 text-[10px] font-black uppercase tracking-wider rounded-sm transition-colors ${
                 activeTab === 'COMMAND'
                   ? 'bg-green-600 text-white shadow-md'
                   : 'text-stone-400 hover:text-white'
               }`}
+              style={{ WebkitTapHighlightColor: 'transparent' }}
             >
               <Navigation className="w-3.5 h-3.5" />
               Geospatial Map
-            </button>
-            <button
+            </motion.button>
+            <motion.button
+              whileTap={{ scale: 0.95 }}
+              transition={springTap}
               onClick={() => setActiveTab('STUDIO')}
-              className={`flex items-center gap-1.5 px-3 py-1.5 text-[10px] font-black uppercase tracking-wider rounded-sm transition-all ${
+              className={`flex items-center gap-1.5 px-3 py-1.5 text-[10px] font-black uppercase tracking-wider rounded-sm transition-colors ${
                 activeTab === 'STUDIO'
                   ? 'bg-green-600 text-white shadow-md'
                   : 'text-stone-400 hover:text-white'
               }`}
+              style={{ WebkitTapHighlightColor: 'transparent' }}
             >
               <Sliders className="w-3.5 h-3.5" />
               Telematics Studio
-            </button>
+            </motion.button>
           </div>
 
-          <button
+          <motion.button
+            whileTap={{ scale: 0.95 }}
+            transition={springTap}
             onClick={resetToHub}
             className="flex items-center gap-1.5 px-3 py-2 bg-stone-900 hover:bg-stone-800 text-stone-200 text-[11px] font-bold uppercase tracking-wider rounded-sm border border-stone-800 transition-colors"
+            style={{ WebkitTapHighlightColor: 'transparent' }}
           >
             <MapPin className="w-3.5 h-3.5 text-green-400" />
             Eldoret Depot
-          </button>
+          </motion.button>
         </div>
       </div>
 
@@ -578,17 +618,20 @@ export default function FleetMap() {
 
                 <div className="flex gap-1 border-l border-stone-800 pl-2">
                   {['ALL', 'ACTIVE', 'STANDBY'].map(f => (
-                    <button
+                    <motion.button
                       key={f}
+                      whileTap={{ scale: 0.9 }}
+                      transition={springTap}
                       onClick={() => setStatusFilter(f)}
                       className={`px-2 py-1 text-[9px] font-black uppercase tracking-wider rounded-sm transition-colors ${
                         statusFilter === f
                           ? 'bg-green-600 text-white'
                           : 'bg-stone-900 text-stone-400 hover:bg-stone-800'
                       }`}
+                      style={{ WebkitTapHighlightColor: 'transparent' }}
                     >
                       {f}
-                    </button>
+                    </motion.button>
                   ))}
                 </div>
               </div>
@@ -613,9 +656,22 @@ export default function FleetMap() {
               </div>
             </div>
 
-            {/* Bottom Floating Telemetry Dock (Inspired directly by Reference Image 2) */}
-            {selectedVehicle && (
-              <div className="absolute bottom-4 left-4 right-4 z-20 pointer-events-auto">
+            {/* Bottom Floating Telemetry Dock — Fluid iOS Sheet pattern: slides
+                up from off-screen with a slightly heavier spring since it's
+                a large surface, rather than a plain fade/CSS transition. */}
+            <AnimatePresence>
+              {selectedVehicle && (
+                <motion.div
+                  // Deliberately no per-vehicle key: switching the selected
+                  // truck should update the dock's content in place, not
+                  // replay the slide-up — that's reserved for the dock
+                  // itself appearing/disappearing (e.g. first data load).
+                  initial={{ y: '100%', opacity: 0 }}
+                  animate={{ y: 0, opacity: 1 }}
+                  exit={{ y: '100%', opacity: 0 }}
+                  transition={springSheet}
+                  className="absolute bottom-4 left-4 right-4 z-20 pointer-events-auto"
+                >
                 <div className="bg-[#121316]/95 backdrop-blur-xl border border-stone-800 p-4 rounded-sm shadow-2xl grid grid-cols-1 md:grid-cols-12 gap-4 items-center">
                   
                   {/* Column 1: Selected Truck Identification & Route */}
@@ -647,20 +703,26 @@ export default function FleetMap() {
 
                     {/* Previous / Next Vehicle Navigator Buttons */}
                     <div className="flex flex-col gap-1 pl-3">
-                      <button
+                      <motion.button
+                        whileTap={{ scale: 0.9 }}
+                        transition={springTap}
                         onClick={() => navigateVehicle('prev')}
                         className="p-1.5 bg-stone-900 hover:bg-stone-800 text-stone-300 rounded-sm border border-stone-800 transition-colors"
+                        style={{ WebkitTapHighlightColor: 'transparent' }}
                         title="Previous Truck"
                       >
                         <ChevronLeft className="w-3.5 h-3.5" />
-                      </button>
-                      <button
+                      </motion.button>
+                      <motion.button
+                        whileTap={{ scale: 0.9 }}
+                        transition={springTap}
                         onClick={() => navigateVehicle('next')}
                         className="p-1.5 bg-stone-900 hover:bg-stone-800 text-stone-300 rounded-sm border border-stone-800 transition-colors"
+                        style={{ WebkitTapHighlightColor: 'transparent' }}
                         title="Next Truck"
                       >
                         <ChevronRight className="w-3.5 h-3.5" />
-                      </button>
+                      </motion.button>
                     </div>
                   </div>
 
@@ -713,8 +775,9 @@ export default function FleetMap() {
                   </div>
 
                 </div>
-              </div>
-            )}
+                </motion.div>
+              )}
+            </AnimatePresence>
           </div>
         </div>
       )}
@@ -730,21 +793,24 @@ export default function FleetMap() {
               const isSel = f.properties.vehicle_id === selectedVehicleId;
               const isMoving = f.properties.ignition;
               return (
-                <button
+                <motion.button
                   key={f.properties.vehicle_id}
+                  whileTap={{ scale: 0.95 }}
+                  transition={springTap}
                   onClick={() => focusVehicle(f)}
-                  className={`flex items-center gap-3 px-3.5 py-2.5 rounded-sm border transition-all shrink-0 text-left ${
+                  className={`flex items-center gap-3 px-3.5 py-2.5 rounded-sm border transition-colors shrink-0 text-left ${
                     isSel
                       ? 'bg-stone-900 border-green-500 text-white shadow-lg'
                       : 'bg-[#121316] border-stone-800 text-stone-400 hover:border-stone-700'
                   }`}
+                  style={{ WebkitTapHighlightColor: 'transparent' }}
                 >
                   <span className={`w-2 h-2 rounded-full ${isMoving ? 'bg-emerald-400 animate-pulse' : 'bg-red-400'}`} />
                   <div>
                     <div className="text-xs font-black">{f.properties.vehicle_id}</div>
                     <div className="text-[10px] text-stone-500">{f.properties.device_name}</div>
                   </div>
-                </button>
+                </motion.button>
               );
             })}
           </div>
@@ -765,9 +831,15 @@ export default function FleetMap() {
                       <p className="text-[10px] text-stone-400">Live telemetry velocity profile across route sector</p>
                     </div>
                   </div>
-                  <button onClick={resetToHub} className="p-1 text-stone-500 hover:text-stone-300">
+                  <motion.button
+                    whileTap={{ scale: 0.85, rotate: 180 }}
+                    transition={springTap}
+                    onClick={resetToHub}
+                    className="p-1 text-stone-500 hover:text-stone-300"
+                    style={{ WebkitTapHighlightColor: 'transparent' }}
+                  >
                     <RefreshCw className="w-3.5 h-3.5" />
-                  </button>
+                  </motion.button>
                 </div>
 
                 <div className="pt-4 flex items-center justify-center">

@@ -1,5 +1,9 @@
 import os
 import json
+from dotenv import load_dotenv
+load_dotenv()  # loaded explicitly here (previously only happened as a side
+                # effect of importing protrack_service/sheets_handler below,
+                # which load it themselves — order-dependent and easy to break)
 from fastapi import FastAPI, Request, HTTPException, Response, Cookie, WebSocket, WebSocketDisconnect
 import asyncio
 from protrack_service import protrack_service
@@ -25,11 +29,17 @@ from psycopg2.extras import RealDictCursor
 from typing import Optional
 from fastapi import Query
 
-# Database configuration placeholders
+# Database configuration
+# SECURITY: no secret defaults are baked in here. Set these via environment
+# variables (or your .env file) — this code used to ship a real fallback
+# password in source, which is unsafe once the repo has any remote/history.
 DB_HOST = os.getenv("DB_HOST", "localhost")
 DB_USER = os.getenv("DB_USER", "evolution_user")
-DB_PASS = os.getenv("DB_PASS", "evolution_db_password_secure_placeholder")
+DB_PASS = os.getenv("DB_PASS", "")
 DB_NAME = os.getenv("DB_NAME", "evolution")
+if not DB_PASS:
+    print("WARNING: DB_PASS is not set. Set it in your environment/.env file — "
+          "the database connection will fail without it.", flush=True)
 
 # Initialize global connection pool
 db_pool = None
@@ -89,9 +99,25 @@ app = FastAPI(title="Mosop Farm Inputs API")
 app.state.limiter = limiter
 app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 
+# SECURITY: allow_origins=["*"] combined with allow_credentials=True lets any
+# website read this API's responses using the logged-in user's cookies
+# (including the httponly refresh_token cookie) — effectively cross-site
+# access to authenticated endpoints. The frontend is served from this same
+# FastAPI app (see the static mount below), so it does not need CORS at all
+# in production. ALLOWED_ORIGINS only needs to be set for local dev (a
+# separate Vite dev server) or if a frontend is ever hosted elsewhere.
+_allowed_origins_env = os.getenv("ALLOWED_ORIGINS", "").strip()
+if _allowed_origins_env:
+    ALLOWED_ORIGINS = [o.strip() for o in _allowed_origins_env.split(",") if o.strip()]
+else:
+    ALLOWED_ORIGINS = [
+        "http://localhost:5173", "http://127.0.0.1:5173",  # vite dev server default
+        "http://localhost:5180", "http://127.0.0.1:5180",  # vite dev server used by FleetMap host check
+    ]
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=ALLOWED_ORIGINS,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -99,7 +125,11 @@ app.add_middleware(
 )
 
 EVOLUTION_API_URL = os.getenv("EVOLUTION_API_URL", "http://localhost:8080")
-EVOLUTION_API_KEY = os.getenv("EVOLUTION_API_KEY", "mosop-secure-global-api-key")
+EVOLUTION_API_KEY = os.getenv("EVOLUTION_API_KEY", "")
+if not EVOLUTION_API_KEY:
+    print("WARNING: EVOLUTION_API_KEY is not set. Set it in your environment/.env "
+          "file — it must match Evolution API's AUTHENTICATION_API_KEY or outgoing "
+          "WhatsApp replies will fail.", flush=True)
 GROQ_API_KEY = os.getenv("GROQ_API_KEY", "")
 
 # Initialize Groq Client
@@ -213,12 +243,25 @@ async def send_whatsapp_message(instance: str, number: str, text: str):
             print(f"Failed to send message: {e}")
             return None
 
+WEBHOOK_VERIFY_SECRET = os.getenv("WEBHOOK_VERIFY_SECRET", "")
+
 @app.post("/webhook/evolution")
 async def evolution_webhook(request: Request):
     """
     Receives webhooks from Evolution API.
     Expected to receive MESSAGES_UPSERT events.
+
+    SECURITY: this endpoint has no authentication by default — anyone who
+    finds the URL can POST a fake payload and get the bot to message any
+    WhatsApp number, or push a fake order through the order flow. Set
+    WEBHOOK_VERIFY_SECRET and configure Evolution API to send the same value
+    in an "apikey" header on its webhook requests to close this off; left
+    unset, verification is skipped to preserve today's behavior.
     """
+    if WEBHOOK_VERIFY_SECRET:
+        if not secrets.compare_digest(request.headers.get("apikey", ""), WEBHOOK_VERIFY_SECRET):
+            raise HTTPException(status_code=401, detail="Invalid webhook credentials")
+
     try:
         payload = await request.json()
         print(f"Raw Webhook Payload: {json.dumps(payload)}", flush=True)
@@ -363,8 +406,24 @@ def health_check():
     return {"status": "healthy", "service": "Mosop Farm Inputs Backend"}
 
 # --- Authentication API ---
-JWT_SECRET = os.getenv("JWT_SECRET", "mosop-super-secure-jwt-key-2026")
+JWT_SECRET = os.getenv("JWT_SECRET", "")
+if not JWT_SECRET:
+    JWT_SECRET = secrets.token_hex(32)
+    print("WARNING: JWT_SECRET is not set. Generated a random one for this process — "
+          "every restart (and every worker, if you run more than one) will invalidate "
+          "existing tokens. Set JWT_SECRET in your environment/.env for production.",
+          flush=True)
 security = HTTPBearer()
+
+# SECURITY: the built-in admin login used to be two hardcoded strings in this
+# file (a real username and password, committed to a public-remote git repo).
+# They now come from the environment only; if unset, the shortcut login is
+# disabled entirely (DB-backed users via /api/users still work).
+ADMIN_USERNAME = os.getenv("ADMIN_USERNAME", "")
+ADMIN_PASSWORD = os.getenv("ADMIN_PASSWORD", "")
+if not ADMIN_USERNAME or not ADMIN_PASSWORD:
+    print("WARNING: ADMIN_USERNAME/ADMIN_PASSWORD are not set. The built-in admin "
+          "login is disabled until you set them in your environment/.env.", flush=True)
 
 LOGIN_ATTEMPTS = {}
 MAX_ATTEMPTS = 5
@@ -435,8 +494,8 @@ def api_login(req: LoginRequest, request: Request, response: Response):
         
     clean_username = req.username.strip()
     clean_password = req.password.strip()
-    correct_username = secrets.compare_digest(clean_username, "MosopAdmin@mosopfarminputs.co.ke")
-    correct_password = secrets.compare_digest(clean_password, "07-888-Sawe")
+    correct_username = bool(ADMIN_USERNAME) and secrets.compare_digest(clean_username, ADMIN_USERNAME)
+    correct_password = bool(ADMIN_PASSWORD) and secrets.compare_digest(clean_password, ADMIN_PASSWORD)
     
     role = "ADMIN"
     user_id = None
@@ -2316,8 +2375,26 @@ async def shutdown_fleet_broadcaster():
             pass
 
 
+# SECURITY: fleet endpoints expose live vehicle GPS location. They used to
+# have no authentication at all (anyone with the URL could track the fleet
+# in real time). Browsers can't send an Authorization header during a
+# WebSocket handshake, so the token is passed as a query param instead.
+def _verify_ws_token(token: Optional[str]) -> bool:
+    if not token:
+        return False
+    try:
+        jwt.decode(token, JWT_SECRET, algorithms=["HS256"])
+        return True
+    except jwt.InvalidTokenError:
+        return False
+
+
 @app.websocket("/ws/fleet")
 async def websocket_fleet_endpoint(websocket: WebSocket):
+    token = websocket.query_params.get("token")
+    if not _verify_ws_token(token):
+        await websocket.close(code=4401)
+        return
     await fleet_manager.connect(websocket)
     try:
         initial_geojson = await protrack_service.get_latest_tracking_geojson()
@@ -2333,13 +2410,13 @@ async def websocket_fleet_endpoint(websocket: WebSocket):
 
 
 @app.get("/api/fleet/live-geojson")
-async def get_fleet_live_geojson():
+async def get_fleet_live_geojson(token_data: dict = Depends(verify_credentials)):
     """REST fallback for live fleet GeoJSON telemetry."""
     return await protrack_service.get_latest_tracking_geojson()
 
 
 @app.get("/api/fleet/status")
-async def get_fleet_status():
+async def get_fleet_status(token_data: dict = Depends(verify_credentials)):
     """Diagnostic status for fleet service & connected WebSocket count."""
     status_dict = protrack_service.get_status()
     status_dict["connected_clients"] = len(fleet_manager.active_connections)
@@ -2354,13 +2431,16 @@ if os.path.exists("frontend/dist"):
     @app.get("/")
     @app.get("/{full_path:path}")
     async def serve_frontend(full_path: str = ""):
-        dist_path = os.path.join(os.path.dirname(__file__), "frontend/dist")
-        
-        # Try serving as a file first
-        file_path = os.path.join(dist_path, full_path)
-        if os.path.isfile(file_path):
+        dist_path = os.path.realpath(os.path.join(os.path.dirname(__file__), "frontend/dist"))
+
+        # Try serving as a file first. SECURITY: resolve symlinks/".." with
+        # realpath and confirm the result is still inside dist_path before
+        # serving it, so a request like "/../../etc/passwd" can't escape
+        # the frontend build directory.
+        file_path = os.path.realpath(os.path.join(dist_path, full_path))
+        if os.path.commonpath([file_path, dist_path]) == dist_path and os.path.isfile(file_path):
             return FileResponse(file_path)
-            
+
         # Otherwise, return index.html for SPA routing
         index_path = os.path.join(dist_path, "index.html")
         response = FileResponse(index_path)

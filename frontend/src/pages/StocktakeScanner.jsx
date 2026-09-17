@@ -403,7 +403,7 @@ const MobileScanner = ({ sessionId = 1, setAuth }) => {
       {/* ========================================================================= */}
       {/* Top Header */}
       {/* ========================================================================= */}
-      <header className="bg-white border-b border-stone-200 px-3.5 sm:px-6 py-3 sm:py-3.5 flex items-center justify-between shadow-xs sticky top-0 z-40">
+      <header className="material-light border-b px-3.5 sm:px-6 py-3 sm:py-3.5 flex items-center justify-between shadow-xs sticky top-0 z-40">
         <div className="min-w-0 pr-2">
           <div className="flex items-center gap-2 flex-wrap">
             <h1 className="font-black text-sm sm:text-base tracking-tight flex items-center gap-1.5 sm:gap-2 text-stone-900">
@@ -649,7 +649,7 @@ const MobileScanner = ({ sessionId = 1, setAuth }) => {
                           setLookupQuery('');
                           if (lookupInputRef.current) lookupInputRef.current.focus();
                         }}
-                        className="w-full bg-stone-900 hover:bg-black active:scale-[0.99] text-white font-black text-sm sm:text-base py-3.5 rounded-sm shadow-sm flex items-center justify-center gap-2 transition-all"
+                        className="w-full bg-stone-900 hover:bg-stone-950 active:scale-[0.99] text-white font-black text-sm sm:text-base py-3.5 rounded-sm shadow-sm flex items-center justify-center gap-2 transition-all"
                       >
                         <Barcode className="w-4 h-4 text-green-400" />
                         <span>Scan Next Item</span>
@@ -1015,7 +1015,7 @@ const MobileScanner = ({ sessionId = 1, setAuth }) => {
               <button
                 onClick={handleCommit}
                 disabled={loading || myCounts.length === 0}
-                className="w-full bg-stone-900 hover:bg-black active:scale-[0.99] text-white font-black text-sm sm:text-base py-4 sm:py-4.5 rounded-sm shadow-sm flex items-center justify-center gap-2.5 disabled:opacity-40 select-none transition-all border border-black"
+                className="w-full bg-stone-900 hover:bg-stone-950 active:scale-[0.99] text-white font-black text-sm sm:text-base py-4 sm:py-4.5 rounded-sm shadow-sm flex items-center justify-center gap-2.5 disabled:opacity-40 select-none transition-all border border-stone-950"
               >
                 <CheckCircle className="w-5 h-5 text-green-400" />
                 <span>COMPLETE & COMMIT MY COUNTS</span>
@@ -1034,7 +1034,7 @@ const MobileScanner = ({ sessionId = 1, setAuth }) => {
       {/* Bottom Navigation: ONLY shown when user IS ASSIGNED to an active stocktake session */}
       {/* Allows switching between Scan to Count and My Counts (Price & Stock is strictly hidden) */}
       {hasActiveSession && isAssigned && !isCommitted && (
-        <nav className="fixed bottom-0 left-0 right-0 bg-white border-t border-stone-200 flex shadow-lg z-50 h-16">
+        <nav className="fixed bottom-0 left-0 right-0 material-light border-t flex shadow-lg z-50 h-16">
           
           {/* Tab 1: Scan to Count */}
           <button 

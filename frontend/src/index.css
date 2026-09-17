@@ -1,6 +1,13 @@
 @import url('https://fonts.googleapis.com/css2?family=Instrument+Sans:ital,wght@0,400..700;1,400..700&display=swap');
 @import "tailwindcss";
 
+/* ===================================================================
+   DESIGN SYSTEM — Apple HIG translated to Tailwind tokens
+   Rather than hand-editing every page, these tokens redefine what the
+   Tailwind utilities every page already uses actually render as, so
+   geometry, motion and depth shift consistently across the whole app
+   in one place.
+   =================================================================== */
 @theme {
   --font-sans: "Instrument Sans", ui-sans-serif, system-ui, sans-serif, "Apple Color Emoji", "Segoe UI Emoji", "Segoe UI Symbol", "Noto Color Emoji";
   --z-base: 0;
@@ -11,6 +18,27 @@
   --z-bottomnav: 50;
   --z-modal: 60;
   --z-toast: 70;
+
+  /* --- Geometry: continuous-curve ("squircle") radius scale -------
+     The app leans almost entirely on rounded-sm/md/lg/xl for cards,
+     chips and buttons alike, so widening this scale is what actually
+     reaches every page. Ratios stay concentric (each step ~1.4x the
+     last) so a button nested in a card still looks like it belongs
+     to the same family of curves as its container. */
+  --radius-xs: 0.5rem;    /* 8px  — was 2px */
+  --radius-sm: 0.625rem;  /* 10px — was 2px  (most-used default) */
+  --radius-md: 0.875rem;  /* 14px — was 6px */
+  --radius-lg: 1.125rem;  /* 18px — was 8px */
+  --radius-xl: 1.375rem;  /* 22px — was 12px */
+  --radius-2xl: 1.75rem;  /* 28px — was 16px (outer cards/modals) */
+  --radius-3xl: 2.25rem;  /* 36px — was 24px (large sheets) */
+
+  /* --- Motion: a spring approximation for CSS-only transitions ----
+     A slight overshoot-then-settle curve, the standard way to fake
+     spring physics without a JS animation library (framer-motion is
+     used directly where a true spring is warranted, e.g. Fleet Radar). */
+  --ease-spring: cubic-bezier(0.34, 1.56, 0.64, 1);
+  --ease-spring-soft: cubic-bezier(0.22, 1, 0.36, 1);
 }
 
 @layer base {
@@ -19,6 +47,26 @@
     color: var(--color-stone-900);
     font-family: var(--font-sans);
     -webkit-tap-highlight-color: transparent;
+  }
+
+  /* Clarity: hierarchy through weight/tracking, not raw color.
+     Large headings tighten up; this only touches real heading tags,
+     so it's additive — it never fights a page's existing classes. */
+  h1, h2, h3 {
+    letter-spacing: -0.015em;
+  }
+
+  /* Deference & Motion: every button gets the same physical-press
+     feedback (a HIG rule, not a per-button choice) — it compresses
+     slightly rather than just changing color. Elements already
+     animated by framer-motion (Fleet Radar) are driven by an inline
+     style during the gesture, which naturally takes precedence over
+     this rule, so the two never fight. */
+  button:not(:disabled) {
+    transition: transform 200ms var(--ease-spring-soft), background-color 150ms ease, color 150ms ease, border-color 150ms ease, opacity 150ms ease;
+  }
+  button:not(:disabled):active {
+    transform: scale(0.96);
   }
 }
 
@@ -31,11 +79,40 @@
     background-size: 20px 100%, 20px 100%;
     background-attachment: local, scroll;
   }
+
+  /* Materials: the two "glass" surfaces used for chrome that floats
+     over content — a light material for headers/bars over the app's
+     stone-50 canvas, a dark one for overlays/sheets on dark surfaces
+     (mirrors Apple's light/dark material pair). */
+  .material-light {
+    background-color: color-mix(in srgb, white 72%, transparent);
+    backdrop-filter: blur(20px);
+    -webkit-backdrop-filter: blur(20px);
+    border-color: color-mix(in srgb, var(--color-stone-200) 60%, transparent);
+  }
+  .material-dark {
+    background-color: color-mix(in srgb, black 70%, transparent);
+    backdrop-filter: blur(20px);
+    -webkit-backdrop-filter: blur(20px);
+    border-color: color-mix(in srgb, white 10%, transparent);
+  }
+
+  /* Motion: same physical-press feedback as the base button rule,
+     for non-<button> tappable elements (cards, rows) that opt in. */
+  .press-scale {
+    transition: transform 200ms var(--ease-spring-soft);
+  }
+  .press-scale:active {
+    transform: scale(0.97);
+  }
 }
 
 @media (prefers-reduced-motion: reduce) {
   * {
     transition-duration: 0.01ms !important;
     animation-duration: 0.01ms !important;
+  }
+  button:not(:disabled):active {
+    transform: none;
   }
 }

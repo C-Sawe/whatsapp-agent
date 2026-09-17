@@ -48,7 +48,7 @@ export default function QuarterlyReports() {
           <div className="h-full bg-green-500 animate-pulse" style={{ width: '100%', transition: 'width 0.5s ease' }}></div>
         </div>
       )}
-      <header className="sticky top-0 z-10 bg-white border-b border-stone-200 px-4 py-3 shadow-sm flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+      <header className="sticky top-0 z-10 material-light border-b px-4 py-3 shadow-sm flex flex-col sm:flex-row sm:items-center justify-between gap-3">
         <div>
           <h1 className="text-xl font-bold text-green-700">Quarterly Reports</h1>
           <p className="text-xs text-stone-500">Historical Quarter-by-Quarter Performance</p>

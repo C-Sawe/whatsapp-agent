@@ -99,35 +99,39 @@ export default function Login({ setAuth, setRole }) {
           <p className="text-[10px] font-black uppercase tracking-[0.2em] text-stone-500 mt-2">Central Command Unit</p>
         </div>
 
-        <div className="bg-stone-800 border border-stone-700 p-8 rounded-sm shadow-2xl">
+        {/* Outer card: dark material + generous outer radius. Inputs and
+            button nest inside with progressively smaller radii, so the
+            curves stay visually related (concentric nesting) rather than
+            each element picking its own arbitrary roundness. */}
+        <div className="material-dark border p-8 rounded-2xl shadow-2xl">
           <form onSubmit={handleLogin} className="space-y-6">
             <div>
               <label className="block text-[10px] font-black uppercase tracking-widest text-stone-400 mb-2">Identification</label>
-              <input 
-                type="text" 
-                value={username} 
+              <input
+                type="text"
+                value={username}
                 onChange={(e) => setUsername(e.target.value)}
                 placeholder="ADMINISTRATOR EMAIL"
                 disabled={lockoutSeconds > 0}
                 required
-                className="w-full bg-stone-900 border border-stone-700 text-white px-4 py-3 rounded-sm text-xs font-mono focus:outline-none focus:border-green-500 focus:ring-1 focus:ring-green-500 transition-colors placeholder:text-stone-600 disabled:opacity-50"
+                className="w-full bg-stone-900/70 border border-stone-700 text-white px-4 py-3 rounded-xl text-xs font-mono focus:outline-none focus:border-green-500 focus:ring-1 focus:ring-green-500 transition-colors placeholder:text-stone-600 disabled:opacity-50"
               />
             </div>
             <div>
               <label className="block text-[10px] font-black uppercase tracking-widest text-stone-400 mb-2">Passcode</label>
-              <input 
-                type="password" 
-                value={password} 
+              <input
+                type="password"
+                value={password}
                 onChange={(e) => setPassword(e.target.value)}
                 placeholder="••••••••"
                 disabled={lockoutSeconds > 0}
                 required
-                className="w-full bg-stone-900 border border-stone-700 text-white px-4 py-3 rounded-sm text-xs font-mono focus:outline-none focus:border-green-500 focus:ring-1 focus:ring-green-500 transition-colors placeholder:text-stone-600 disabled:opacity-50"
+                className="w-full bg-stone-900/70 border border-stone-700 text-white px-4 py-3 rounded-xl text-xs font-mono focus:outline-none focus:border-green-500 focus:ring-1 focus:ring-green-500 transition-colors placeholder:text-stone-600 disabled:opacity-50"
               />
             </div>
-            
+
             {error && (
-              <div className="bg-red-500/10 border border-red-500/40 rounded-sm p-4 text-center">
+              <div className="bg-red-500/10 border border-red-500/40 rounded-xl p-4 text-center">
                 <div className="flex items-center justify-center gap-2 text-red-400 text-[10px] font-black uppercase tracking-widest">
                   <AlertCircle className="w-4 h-4 text-red-400 shrink-0" />
                   <span>{error}</span>
@@ -155,10 +159,10 @@ export default function Login({ setAuth, setRole }) {
               </div>
             )}
             
-            <button 
-              type="submit" 
+            <button
+              type="submit"
               disabled={loading || lockoutSeconds > 0}
-              className="w-full bg-green-600 hover:bg-green-700 text-white font-black uppercase tracking-widest text-xs py-4 rounded-sm transition-colors flex items-center justify-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed"
+              className="w-full bg-green-600 hover:bg-green-700 text-white font-black uppercase tracking-widest text-xs py-4 rounded-xl transition-colors flex items-center justify-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed"
             >
               <Lock className="w-4 h-4" />
               {loading 

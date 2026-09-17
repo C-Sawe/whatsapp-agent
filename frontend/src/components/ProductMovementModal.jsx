@@ -70,7 +70,7 @@ export default function ProductMovementModal({ isOpen, onClose, product, storeId
               </span>
               <span className="text-xs font-black text-stone-400 tracking-widest">{product.sku}</span>
             </div>
-            <h2 className="text-xl md:text-2xl font-black text-stone-900 leading-tight">{product.description}</h2>
+            <h2 className="text-xl md:text-2xl font-black text-stone-900 leading-tight tracking-tight">{product.description}</h2>
             <p className="text-sm text-stone-500 mt-1">{product.supplier}</p>
           </div>
           <button 
@@ -85,21 +85,21 @@ export default function ProductMovementModal({ isOpen, onClose, product, storeId
           <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
             <div className="bg-white p-4 rounded-xl border border-stone-200 shadow-sm">
               <p className="text-[10px] font-black uppercase tracking-widest text-stone-400 mb-1">Current Stock</p>
-              <p className={`text-xl font-black ${product.stock_quantity <= 0 ? 'text-red-600' : 'text-stone-900'}`}>
+              <p className={`text-xl font-black tracking-tight ${product.stock_quantity <= 0 ? 'text-red-600' : 'text-stone-900'}`}>
                 {product.stock_quantity}
               </p>
             </div>
             <div className="bg-white p-4 rounded-xl border border-stone-200 shadow-sm">
               <p className="text-[10px] font-black uppercase tracking-widest text-stone-400 mb-1">Price</p>
-              <p className="text-xl font-black text-stone-900">KSh {product.retail_price?.toLocaleString() || '0'}</p>
+              <p className="text-xl font-black text-stone-900 tracking-tight">KSh {product.retail_price?.toLocaleString() || '0'}</p>
             </div>
             <div className="bg-green-50 p-4 rounded-xl border border-green-200 shadow-sm">
               <p className="text-[10px] font-black uppercase tracking-widest text-green-600 mb-1">{days}d Sold</p>
-              <p className="text-xl font-black text-green-700">{loading ? '...' : (data?.total_sold || 0)}</p>
+              <p className="text-xl font-black text-green-700 tracking-tight">{loading ? '...' : (data?.total_sold || 0)}</p>
             </div>
             <div className="bg-blue-50 p-4 rounded-xl border border-blue-200 shadow-sm">
               <p className="text-[10px] font-black uppercase tracking-widest text-blue-600 mb-1">{days}d Rev.</p>
-              <p className="text-xl font-black text-blue-700 truncate">KSh {loading ? '...' : (data?.total_revenue?.toLocaleString() || '0')}</p>
+              <p className="text-xl font-black text-blue-700 tracking-tight truncate">KSh {loading ? '...' : (data?.total_revenue?.toLocaleString() || '0')}</p>
             </div>
           </div>
 

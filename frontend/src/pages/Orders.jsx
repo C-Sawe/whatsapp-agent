@@ -214,7 +214,7 @@ export default function Orders() {
       {/* Reply Modal */}
       {selectedOrder && (
         <div className="fixed inset-0 bg-stone-900/80 backdrop-blur-sm flex items-center justify-center z-modal p-4">
-          <div className="bg-white border border-stone-200 rounded-sm w-full max-w-lg relative shadow-xl">
+          <div className="bg-white border border-stone-200 rounded-2xl overflow-hidden w-full max-w-lg relative shadow-xl">
             <div className="p-6 border-b border-stone-200 flex justify-between items-center bg-stone-50">
               <div>
                 <h2 className="text-sm font-black uppercase tracking-widest text-stone-900 m-0">Secure Transmission</h2>

@@ -23,7 +23,7 @@ const DebtorsLeaderboard = ({ debtors, page, totalPages, totalDebtors, onPageCha
             <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
               <div className="flex flex-col">
                 <span className="text-[10px] font-bold text-stone-400 uppercase tracking-widest">A/C: {d.account_number || 'N/A'}</span>
-                <p className="text-sm font-black text-stone-900">{d.customer_name || 'Unknown Customer'}</p>
+                <p className="text-sm font-black text-stone-900 tracking-tight">{d.customer_name || 'Unknown Customer'}</p>
                 <div className="flex flex-col gap-0.5 mt-1">
                   <span className="text-xs font-medium text-stone-500">Limit: {formatCurrency(d.credit_limit)}</span>
                   {d.last_payment_date && (
@@ -37,7 +37,7 @@ const DebtorsLeaderboard = ({ debtors, page, totalPages, totalDebtors, onPageCha
               <div className="flex items-center justify-between sm:justify-end w-full sm:w-auto gap-4">
                 <div className="text-left sm:text-right">
                   <span className="text-[10px] font-bold text-stone-400 uppercase tracking-widest block">Outstanding</span>
-                  <p className="text-base font-black text-red-600">{formatCurrency(d.outstanding_debt)}</p>
+                  <p className="text-base font-black text-red-600 tracking-tight">{formatCurrency(d.outstanding_debt)}</p>
                 </div>
                 {d.phone_number && (
                   <div className="flex gap-2 shrink-0">

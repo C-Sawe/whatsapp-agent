@@ -128,8 +128,9 @@ const DashboardOverview = () => {
   return (
     <div className="min-h-screen bg-stone-50 text-stone-800 font-sans pb-20">
       
-      {/* Local Dashboard Filters */}
-      <header className="sticky top-0 z-10 bg-white border-b border-stone-200 px-4 py-3 shadow-sm flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+      {/* Local Dashboard Filters — glass material since content scrolls
+          underneath it */}
+      <header className="sticky top-0 z-10 material-light border-b px-4 py-3 shadow-sm flex flex-col sm:flex-row sm:items-center justify-between gap-3">
         <div>
           <h1 className="text-xl font-bold text-green-700">Mosop Analytics</h1>
           <p className="text-xs text-stone-500">Live Sales & Performance</p>

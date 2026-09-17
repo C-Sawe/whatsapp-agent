@@ -729,8 +729,8 @@ const ManagerDashboard = ({ sessionId = 1 }) => {
 
       {/* Start Session Modal */}
       {showModal && (
-        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
-          <div className="bg-white rounded-sm shadow-xl w-full max-w-md p-6 border border-stone-200 animate-in zoom-in-95 duration-200">
+        <div className="fixed inset-0 bg-black/50 backdrop-blur-sm flex items-center justify-center z-50 p-4">
+          <div className="bg-white rounded-2xl shadow-xl w-full max-w-md p-6 border border-stone-200 animate-in zoom-in-95 duration-200">
             <h2 className="text-xl font-bold mb-4 text-stone-900">Start New Stocktake Session</h2>
             <form onSubmit={confirmStartSession} className="space-y-4">
               <div>
@@ -777,7 +777,7 @@ const ManagerDashboard = ({ sessionId = 1 }) => {
                     type="checkbox"
                     checked={newSessionLiveSales}
                     onChange={(e) => setNewSessionLiveSales(e.target.checked)}
-                    className="w-4 h-4 mt-0.5 text-amber-600 rounded-sm focus:ring-amber-500 cursor-pointer"
+                    className="w-4 h-4 mt-0.5 text-amber-600 rounded-[4px] focus:ring-amber-500 cursor-pointer"
                   />
                   <div>
                     <span className="text-xs font-bold text-amber-900 flex items-center gap-1.5">
@@ -803,7 +803,7 @@ const ManagerDashboard = ({ sessionId = 1 }) => {
                           if (e.target.checked) setSelectedEmployees([...selectedEmployees, emp.id]);
                           else setSelectedEmployees(selectedEmployees.filter(id => id !== emp.id));
                         }}
-                        className="w-4 h-4 text-green-600 rounded-sm focus:ring-green-500"
+                        className="w-4 h-4 text-green-600 rounded-[4px] focus:ring-green-500"
                       />
                       <span className="text-xs font-medium text-stone-800">{emp.username}</span>
                     </label>
@@ -834,8 +834,8 @@ const ManagerDashboard = ({ sessionId = 1 }) => {
 
       {/* Add Participant Modal */}
       {showAddParticipantModal && (
-        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
-          <div className="bg-white rounded-sm shadow-xl w-full max-w-sm p-6 border border-stone-200 animate-in zoom-in-95 duration-200">
+        <div className="fixed inset-0 bg-black/50 backdrop-blur-sm flex items-center justify-center z-50 p-4">
+          <div className="bg-white rounded-2xl shadow-xl w-full max-w-sm p-6 border border-stone-200 animate-in zoom-in-95 duration-200">
             <h2 className="text-lg font-bold mb-3 text-stone-900">Assign Staff to Stocktake</h2>
             <form onSubmit={confirmAddParticipant} className="space-y-4">
               <div>
@@ -880,7 +880,7 @@ const ManagerDashboard = ({ sessionId = 1 }) => {
           <div className={`bg-white shadow-2xl flex flex-col transition-all duration-200 overflow-hidden ${
             isModalMaximized 
               ? 'w-full h-full rounded-none' 
-              : 'w-full max-w-6xl h-[92vh] rounded-sm border border-stone-200 shadow-2xl animate-in zoom-in-95'
+              : 'w-full max-w-6xl h-[92vh] rounded-2xl border border-stone-200 shadow-2xl animate-in zoom-in-95'
           }`}>
             
             {/* Modal Header */}
